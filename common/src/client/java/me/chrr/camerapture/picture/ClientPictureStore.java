@@ -2,6 +2,7 @@ package me.chrr.camerapture.picture;
 
 import me.chrr.camerapture.Camerapture;
 import me.chrr.camerapture.CameraptureClient;
+import me.chrr.camerapture.net.clientbound.PictureErrorPacket;
 import me.chrr.camerapture.net.serverbound.RequestDownloadPacket;
 import me.chrr.camerapture.render.CameraptureDebugStats;
 import me.chrr.camerapture.util.ImageUtil;
@@ -9,6 +10,8 @@ import me.chrr.camerapture.util.NativeImageUtil;
 import net.minecraft.client.Minecraft;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.renderer.texture.DynamicTexture;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
 
 import java.awt.image.BufferedImage;
@@ -24,6 +27,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 /// separating Full and Thumbnail texture caches with independent VRAM budgets, grace periods,
 /// and LRU tracking.
 public class ClientPictureStore {
+    private static final Logger LOGGER = LogManager.getLogger("Camerapture/ClientPictureStore");
     private static final ClientPictureStore INSTANCE = new ClientPictureStore();
 
     /// An absolute ceiling on what we'll decode.
@@ -44,12 +48,12 @@ public class ClientPictureStore {
         return (quality == PictureQuality.THUMBNAIL) ? thumbnailCache : fullCache;
     }
 
-    boolean isInFlight(UUID id, PictureQuality quality) {
+    public boolean isInFlight(UUID id, PictureQuality quality) {
         return inFlightNetworkRequests.contains(new PictureKey(id, quality));
     }
 
-    RemotePicture getPictureDirect(UUID id) {
-        return pictures.get(id);
+    public RemotePicture getPictureDirect(UUID id) {
+        return pictures.computeIfAbsent(id, RemotePicture::new);
     }
 
     /// Resolve the effective rendering texture for a picture, requesting download if not yet loaded
@@ -242,14 +246,24 @@ public class ClientPictureStore {
         }
     }
 
-    public void processReceivedError(UUID id, PictureQuality quality) {
+    public void processReceivedError(UUID id, PictureQuality quality, PictureErrorPacket.Reason reason) {
         inFlightNetworkRequests.remove(new PictureKey(id, quality));
         RemotePicture picture = pictures.get(id);
         if (picture != null) {
-            picture.getTexture(quality).setStatus(PictureTexture.Status.ERROR);
+            if (reason == PictureErrorPacket.Reason.BUSY) {
+                // Transient server saturation: reset to NOT_LOADED so it can be retried on next render
+                picture.getTexture(quality).setStatus(PictureTexture.Status.NOT_LOADED);
+                LOGGER.warn("server busy for picture {} ({}), resetting to NOT_LOADED", id, quality);
+            } else {
+                picture.getTexture(quality).setStatus(PictureTexture.Status.ERROR);
+                CameraptureDebugStats.missingPictures.incrementAndGet();
+                LOGGER.error("remote error for picture {} ({})", id, quality);
+            }
         }
-        CameraptureDebugStats.missingPictures.incrementAndGet();
-        Camerapture.LOGGER.error("remote error for image {} ({})", id, quality);
+    }
+
+    public void processReceivedError(UUID id, PictureQuality quality) {
+        processReceivedError(id, quality, PictureErrorPacket.Reason.NOT_FOUND);
     }
 
     /// Cache picture bytes to disk.

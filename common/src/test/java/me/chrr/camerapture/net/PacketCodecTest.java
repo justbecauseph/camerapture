@@ -6,6 +6,7 @@ import io.netty.handler.codec.DecoderException;
 import me.chrr.camerapture.TransportLimits;
 import me.chrr.camerapture.net.clientbound.DownloadPartialPicturePacket;
 import me.chrr.camerapture.net.serverbound.UploadPartialPicturePacket;
+import me.chrr.camerapture.net.clientbound.PictureErrorPacket;
 import me.chrr.camerapture.picture.PictureQuality;
 import org.junit.jupiter.api.Test;
 
@@ -111,5 +112,28 @@ public class PacketCodecTest {
         buf.clear();
         PictureQuality.STREAM_CODEC.encode(buf, PictureQuality.FULL);
         assertEquals(PictureQuality.FULL, PictureQuality.STREAM_CODEC.decode(buf));
+    }
+
+    @Test
+    public void testPictureErrorPacketStreamCodec() {
+        UUID id = UUID.randomUUID();
+        ByteBuf buf = Unpooled.buffer();
+
+        PictureErrorPacket packetNotFound = new PictureErrorPacket(id, PictureQuality.FULL, PictureErrorPacket.Reason.NOT_FOUND);
+        PictureErrorPacket.STREAM_CODEC.encode(buf, packetNotFound);
+        PictureErrorPacket decodedNotFound = PictureErrorPacket.STREAM_CODEC.decode(buf);
+
+        assertEquals(id, decodedNotFound.uuid());
+        assertEquals(PictureQuality.FULL, decodedNotFound.quality());
+        assertEquals(PictureErrorPacket.Reason.NOT_FOUND, decodedNotFound.reason());
+
+        buf.clear();
+        PictureErrorPacket packetBusy = new PictureErrorPacket(id, PictureQuality.THUMBNAIL, PictureErrorPacket.Reason.BUSY);
+        PictureErrorPacket.STREAM_CODEC.encode(buf, packetBusy);
+        PictureErrorPacket decodedBusy = PictureErrorPacket.STREAM_CODEC.decode(buf);
+
+        assertEquals(id, decodedBusy.uuid());
+        assertEquals(PictureQuality.THUMBNAIL, decodedBusy.quality());
+        assertEquals(PictureErrorPacket.Reason.BUSY, decodedBusy.reason());
     }
 }

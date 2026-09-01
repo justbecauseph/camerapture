@@ -231,12 +231,14 @@ public class Camerapture {
         NETWORK.onReceiveFromClient(RequestDownloadPacket.class, (packet, player) -> {
             if (packet.quality() == me.chrr.camerapture.picture.PictureQuality.THUMBNAIL) {
                 ServerPictureStore.getInstance().getOrGenerateThumbnailAsync(player.server, packet.uuid())
-                        .thenAccept(picture -> {
-                            if (picture != null) {
-                                DownloadQueue.getInstance().send(player, packet.uuid(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL, picture);
+                        .thenAccept(result -> {
+                            if (result.type() == ServerPictureStore.ThumbnailResultType.SUCCESS && result.picture() != null) {
+                                DownloadQueue.getInstance().send(player, packet.uuid(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL, result.picture());
+                            } else if (result.type() == ServerPictureStore.ThumbnailResultType.BUSY) {
+                                NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL, PictureErrorPacket.Reason.BUSY));
                             } else {
                                 LOGGER.warn("{} requested a thumbnail with an unknown UUID: {}", player.getName().getString(), packet.uuid());
-                                NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL));
+                                NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL, PictureErrorPacket.Reason.NOT_FOUND));
                             }
                         });
             } else {
@@ -250,10 +252,10 @@ public class Camerapture {
                         }
 
                         LOGGER.warn("{} requested a picture with an unknown UUID: {} ({})", player.getName().getString(), packet.uuid(), packet.quality());
-                        NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));
+                        NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality(), PictureErrorPacket.Reason.NOT_FOUND));
                     } catch (Exception e) {
                         LOGGER.error("failed to load picture for {} ({}): {}", player.getName().getString(), packet.uuid(), packet.quality(), e);
-                        NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));
+                        NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality(), PictureErrorPacket.Reason.BUSY));
                     }
                 });
             }

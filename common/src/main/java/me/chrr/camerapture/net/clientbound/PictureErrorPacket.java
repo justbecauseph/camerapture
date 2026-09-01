@@ -1,19 +1,54 @@
 package me.chrr.camerapture.net.clientbound;
 
-import com.mojang.serialization.codecs.RecordCodecBuilder;
-import me.chrr.camerapture.Camerapture;
+import io.netty.buffer.ByteBuf;
 import me.chrr.camerapture.net.NetCodec;
 import me.chrr.camerapture.picture.PictureQuality;
 import net.minecraft.core.UUIDUtil;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.StringRepresentable;
 
 import java.util.UUID;
 
-public record PictureErrorPacket(UUID uuid, PictureQuality quality) {
-    private static final Identifier ID = Camerapture.id("picture_error");
-    public static final NetCodec<PictureErrorPacket> NET_CODEC = new NetCodec<>(ID,
-            RecordCodecBuilder.create(instance -> instance.group(
-                    UUIDUtil.AUTHLIB_CODEC.fieldOf("uuid").forGetter(PictureErrorPacket::uuid),
-                    PictureQuality.CODEC.fieldOf("quality").forGetter(PictureErrorPacket::quality)
-            ).apply(instance, PictureErrorPacket::new)));
+public record PictureErrorPacket(UUID uuid, PictureQuality quality, Reason reason) {
+    public enum Reason implements StringRepresentable {
+        NOT_FOUND("not_found"),
+        BUSY("busy");
+
+        public static final StreamCodec<ByteBuf, Reason> STREAM_CODEC = ByteBufCodecs.idMapper(i -> values()[i], Reason::ordinal);
+
+        private final String name;
+
+        Reason(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String getSerializedName() {
+            return name;
+        }
+    }
+
+    public PictureErrorPacket(UUID uuid, PictureQuality quality) {
+        this(uuid, quality, Reason.NOT_FOUND);
+    }
+
+    private static final Identifier ID = Identifier.fromNamespaceAndPath("camerapture", "picture_error");
+
+    public static final StreamCodec<ByteBuf, PictureErrorPacket> STREAM_CODEC = StreamCodec.of(
+            (buf, packet) -> {
+                UUIDUtil.STREAM_CODEC.encode(buf, packet.uuid());
+                PictureQuality.STREAM_CODEC.encode(buf, packet.quality());
+                Reason.STREAM_CODEC.encode(buf, packet.reason());
+            },
+            buf -> {
+                UUID uuid = UUIDUtil.STREAM_CODEC.decode(buf);
+                PictureQuality quality = PictureQuality.STREAM_CODEC.decode(buf);
+                Reason reason = Reason.STREAM_CODEC.decode(buf);
+                return new PictureErrorPacket(uuid, quality, reason);
+            }
+    );
+
+    public static final NetCodec<PictureErrorPacket> NET_CODEC = new NetCodec<>(ID, STREAM_CODEC);
 }

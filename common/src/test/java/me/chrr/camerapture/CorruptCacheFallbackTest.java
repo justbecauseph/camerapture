@@ -1,5 +1,7 @@
 package me.chrr.camerapture;
 
+import me.chrr.camerapture.net.clientbound.PictureErrorPacket;
+import me.chrr.camerapture.picture.ClientPictureStore;
 import me.chrr.camerapture.picture.PictureQuality;
 import me.chrr.camerapture.picture.PictureTexture;
 import me.chrr.camerapture.picture.RemotePicture;
@@ -71,18 +73,28 @@ public class CorruptCacheFallbackTest {
     }
 
     @Test
-    public void testServerErrorAfterCorruptCacheTransitionsToError() {
-        UUID id = UUID.randomUUID();
-        RemotePicture picture = new RemotePicture(id);
+    public void testClientPictureStoreHandlesNotFoundAndBusyErrors() {
+        ClientPictureStore store = ClientPictureStore.getInstance();
+        UUID notFoundId = UUID.randomUUID();
+        UUID busyId = UUID.randomUUID();
 
-        // Fetch started
-        picture.getFull().setStatus(PictureTexture.Status.FETCHING);
+        RemotePicture notFoundPic = store.getPictureDirect(notFoundId);
+        notFoundPic.getFull().setStatus(PictureTexture.Status.FETCHING);
 
-        // When server error packet arrives for in-flight request
-        picture.getFull().setStatus(PictureTexture.Status.ERROR);
+        RemotePicture busyPic = store.getPictureDirect(busyId);
+        busyPic.getFull().setStatus(PictureTexture.Status.FETCHING);
 
-        assertEquals(PictureTexture.Status.ERROR, picture.getFull().getStatus(), "Server failure must mark texture as ERROR");
-        assertNotEquals(PictureTexture.Status.FETCHING, picture.getFull().getStatus(), "Texture must never be stuck in FETCHING");
+        // Process NOT_FOUND
+        store.processReceivedError(notFoundId, PictureQuality.FULL, PictureErrorPacket.Reason.NOT_FOUND);
+        assertEquals(PictureTexture.Status.ERROR, notFoundPic.getFull().getStatus(),
+                "NOT_FOUND must transition texture to terminal ERROR status");
+        assertFalse(store.isInFlight(notFoundId, PictureQuality.FULL));
+
+        // Process BUSY (transient server saturation)
+        store.processReceivedError(busyId, PictureQuality.FULL, PictureErrorPacket.Reason.BUSY);
+        assertEquals(PictureTexture.Status.NOT_LOADED, busyPic.getFull().getStatus(),
+                "BUSY must transition texture to NOT_LOADED for retry rather than terminal ERROR");
+        assertFalse(store.isInFlight(busyId, PictureQuality.FULL));
     }
 
     @Test

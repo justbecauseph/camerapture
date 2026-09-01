@@ -82,7 +82,7 @@ public class CameraptureClient {
 
         // Server sends back an error following a picture request by UUID and quality
         Camerapture.NETWORK.onReceiveFromServer(PictureErrorPacket.class, (packet) -> {
-            ClientPictureStore.getInstance().processReceivedError(packet.uuid(), packet.quality());
+            ClientPictureStore.getInstance().processReceivedError(packet.uuid(), packet.quality(), packet.reason());
             collectors.remove(new me.chrr.camerapture.picture.PictureKey(packet.uuid(), packet.quality()));
         });
 
