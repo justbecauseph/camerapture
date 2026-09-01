@@ -18,6 +18,7 @@ dependencies {
     jij(tapestryModule("tapestry-base")!!)
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testImplementation("me.justbecause.distantdecorations:distant-decorations:0.1.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

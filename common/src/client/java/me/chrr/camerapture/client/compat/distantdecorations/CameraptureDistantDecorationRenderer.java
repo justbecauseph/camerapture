@@ -23,6 +23,9 @@ import net.minecraft.world.phys.Vec3;
 public class CameraptureDistantDecorationRenderer implements DecorationClientRenderer<CameraptureDistantData> {
 
     public static final double DISTANCE_FROM_WALL = 0.01;
+    public static final double FAR_LOD_CULL_PIXELS = 0.01;
+    public static final double FAR_LOD_TARGET_PIXELS = 1.0;
+    public static final double FAR_LOD_MAX_SCALE = 16.0;
 
     public static void init() {
         ClientDecorationRegistry.registerRenderer(new CameraptureDistantDecorationRenderer());
@@ -30,7 +33,7 @@ public class CameraptureDistantDecorationRenderer implements DecorationClientRen
 
     @Override
     public double cullBelowProjectedPixelSize() {
-        return 0.25;
+        return FAR_LOD_CULL_PIXELS;
     }
 
     @Override
@@ -66,10 +69,9 @@ public class CameraptureDistantDecorationRenderer implements DecorationClientRen
         poseStack.translate(0.5 - data.width() / 2.0, -0.5 + data.height() / 2.0, 0.5 - PictureFrameGeometry.HALF_FRAME_DEPTH + DISTANCE_FROM_WALL);
 
         // Far-LOD visual footprint scaling: ensure subpixel quad maintains ~1px rasterizable footprint
-        double targetMinPixelSize = 1.0;
         double visualScale = 1.0;
-        if (projectedPixelSize > 0 && projectedPixelSize < targetMinPixelSize) {
-            visualScale = Math.min(16.0, targetMinPixelSize / projectedPixelSize);
+        if (projectedPixelSize > 0 && projectedPixelSize < FAR_LOD_TARGET_PIXELS) {
+            visualScale = Math.min(FAR_LOD_MAX_SCALE, FAR_LOD_TARGET_PIXELS / projectedPixelSize);
             me.justbecause.distantdecorations.telemetry.TelemetryMetrics.clientFarLodScaledRenders++;
         }
         if (visualScale > 1.0) {
