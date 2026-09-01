@@ -1,15 +1,23 @@
 package me.chrr.camerapture.mixin;
 
 import me.chrr.camerapture.item.CameraItem;
+import me.chrr.camerapture.render.RenderMetrics;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(GameRenderer.class)
 public class GameRendererMixin {
+    @Inject(method = "render", at = @At("HEAD"))
+    private void onRenderFrameBegin(DeltaTracker deltaTracker, boolean renderLevel, CallbackInfo ci) {
+        RenderMetrics.beginFrame();
+    }
+
     /// Don't render block outlines when holding an active camera.
     @Inject(method = "shouldRenderBlockOutline", at = @At(value = "HEAD"), cancellable = true)
     public void shouldRenderBlockOutline(CallbackInfoReturnable<Boolean> cir) {

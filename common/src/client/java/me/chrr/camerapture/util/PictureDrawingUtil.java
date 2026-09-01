@@ -17,8 +17,11 @@ public enum PictureDrawingUtil {
     }
 
     public static void drawPicture(GuiGraphicsExtractor graphics, Font font, RemotePicture picture, int x, int y, int width, int height, PictureQuality quality) {
-        me.chrr.camerapture.picture.ResolvedPicture resolved = me.chrr.camerapture.picture.ClientPictureStore.getInstance().resolveForRender(picture.getId(), quality);
-        PictureTexture texture = resolved.texture();
+        PictureTexture texture = me.chrr.camerapture.picture.ClientPictureStore.getInstance().resolveTextureForRender(picture.getId(), quality);
+        drawPicture(graphics, font, texture, x, y, width, height);
+    }
+
+    public static void drawPicture(GuiGraphicsExtractor graphics, Font font, PictureTexture texture, int x, int y, int width, int height) {
         switch (texture.getStatus()) {
             case NOT_LOADED, FETCHING -> {
                 String loading = LoadingDotsText.get(System.currentTimeMillis());

@@ -35,18 +35,26 @@ public final class RenderMetrics {
     }
 
     private static FrameContext currentFrameContext = null;
-    private static long lastContextFrameTime = -1L;
+    private static long frameEpoch = 0L;
+
+    public static void beginFrame() {
+        frameEpoch++;
+        currentFrameContext = new FrameContext(Minecraft.getInstance(), frameEpoch);
+    }
 
     public static FrameContext getFrameContext() {
-        long now = System.currentTimeMillis();
-        if (currentFrameContext == null || now - lastContextFrameTime > 16L) {
-            currentFrameContext = new FrameContext(Minecraft.getInstance());
-            lastContextFrameTime = now;
+        if (currentFrameContext == null) {
+            currentFrameContext = new FrameContext(Minecraft.getInstance(), frameEpoch);
         }
         return currentFrameContext;
     }
 
+    public static long getFrameEpoch() {
+        return frameEpoch;
+    }
+
     public static class FrameContext {
+        public final long epoch;
         public final double focalLengthPixels;
         public final float minPixels;
         public final float fullThreshold;
@@ -61,13 +69,14 @@ public final class RenderMetrics {
         public final double fullLowDistFactorSq;
         public final double fullHighDistFactorSq;
 
-        public FrameContext(Minecraft client) {
+        public FrameContext(Minecraft client, long epoch) {
+            this.epoch = epoch;
             this.focalLengthPixels = getFocalLengthPixels();
             this.minPixels = Math.max(0.5f, me.chrr.camerapture.Camerapture.CONFIG_MANAGER.getConfig().client.minimumRenderPixels);
             this.fullThreshold = Math.max(minPixels + 1.0f, me.chrr.camerapture.Camerapture.CONFIG_MANAGER.getConfig().client.fullLodPixels);
             this.renderBacking = me.chrr.camerapture.Camerapture.CONFIG_MANAGER.getConfig().client.renderPictureFrameBacking;
             this.cameraActive = client.player != null && me.chrr.camerapture.item.CameraItem.find(client.player, true) != null;
-            this.hudHidden = client.gui.hud.isHidden();
+            this.hudHidden = client.gui != null && client.gui.hud != null && client.gui.hud.isHidden();
             this.targetedBlockPos = (client.hitResult instanceof net.minecraft.world.phys.BlockHitResult bhr) ? bhr.getBlockPos() : null;
 
             double skipDiv = minPixels * 0.75;

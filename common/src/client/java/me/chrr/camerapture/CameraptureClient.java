@@ -47,8 +47,17 @@ public class CameraptureClient {
 
     public static void registerPacketHandlers() {
         // Server requests client to send over a picture, most likely from the camera
-        Camerapture.NETWORK.onReceiveFromServer(RequestUploadPacket.class, (packet) ->
-                Camerapture.IMAGE_EXECUTOR.execute(() -> PictureTaker.getInstance().uploadStoredPicture(packet.uuid())));
+        Camerapture.NETWORK.onReceiveFromServer(RequestUploadPacket.class, (packet) -> {
+            boolean submitted = Camerapture.trySubmitImageTask(() -> PictureTaker.getInstance().uploadStoredPicture(packet.uuid()));
+            if (!submitted) {
+                Camerapture.LOGGER.warn("Image worker saturated, failing upload for {}", packet.uuid());
+                PictureTaker.getInstance().clearPendingPicture();
+                net.minecraft.client.player.LocalPlayer player = net.minecraft.client.Minecraft.getInstance().player;
+                if (player != null) {
+                    player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("text.camerapture.upload_failed").withStyle(net.minecraft.ChatFormatting.RED));
+                }
+            }
+        });
 
         // Server sends back a picture following a picture request by UUID and quality
         Map<me.chrr.camerapture.picture.PictureKey, ByteCollector> collectors = new ConcurrentHashMap<>();

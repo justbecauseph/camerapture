@@ -167,8 +167,7 @@ public class PictureFrameBlockEntityRenderer implements BlockEntityRenderer<Pict
             }
         } else {
             PictureQuality targetQuality = (state.lod == PictureLod.FULL) ? PictureQuality.FULL : PictureQuality.THUMBNAIL;
-            me.chrr.camerapture.picture.ResolvedPicture resolved = ClientPictureStore.getInstance().resolveForRender(state.pictureId, targetQuality);
-            PictureTexture texture = (resolved != null) ? resolved.texture() : null;
+            PictureTexture texture = ClientPictureStore.getInstance().resolveTextureForRender(state.pictureId, targetQuality);
 
             if (state.lod == PictureLod.THUMBNAIL) {
                 if (texture != null && texture.getStatus() == PictureTexture.Status.SUCCESS) {
@@ -260,10 +259,13 @@ public class PictureFrameBlockEntityRenderer implements BlockEntityRenderer<Pict
             return distSq <= 96.0 * 96.0;
         }
 
-        // Early culling before extraction: if projected pixel size is below skip threshold, skip extraction
+        // Early culling before extraction: if already skipped, use tighter minHigh factor; otherwise skip factor
         RenderMetrics.FrameContext ctx = RenderMetrics.getFrameContext();
         float worldSize = Math.max(blockEntity.getFrameWidth(), blockEntity.getFrameHeight());
-        double maxDistSq = (worldSize * worldSize) * ctx.skipDistFactorSq;
+        double factorSq = (blockEntity.lastLod == PictureLod.SKIP)
+                ? ctx.minHighDistFactorSq
+                : ctx.skipDistFactorSq;
+        double maxDistSq = (worldSize * worldSize) * factorSq;
         return distSq <= maxDistSq;
     }
 

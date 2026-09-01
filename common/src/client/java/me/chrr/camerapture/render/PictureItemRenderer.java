@@ -25,8 +25,8 @@ public class PictureItemRenderer implements SpecialModelRenderer<UUID> {
             return false;
         }
 
-        me.chrr.camerapture.picture.ResolvedPicture resolved = ClientPictureStore.getInstance().resolveForRender(pictureData.id(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL);
-        return resolved.status() == me.chrr.camerapture.picture.PictureTexture.Status.SUCCESS;
+        me.chrr.camerapture.picture.PictureTexture texture = ClientPictureStore.getInstance().resolveTextureForRender(pictureData.id(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL);
+        return texture.getStatus() == me.chrr.camerapture.picture.PictureTexture.Status.SUCCESS;
     }
 
     @Override
@@ -35,8 +35,7 @@ public class PictureItemRenderer implements SpecialModelRenderer<UUID> {
             return;
         }
 
-        me.chrr.camerapture.picture.ResolvedPicture resolved = ClientPictureStore.getInstance().resolveForRender(data, me.chrr.camerapture.picture.PictureQuality.THUMBNAIL);
-        me.chrr.camerapture.picture.PictureTexture texture = resolved.texture();
+        me.chrr.camerapture.picture.PictureTexture texture = ClientPictureStore.getInstance().resolveTextureForRender(data, me.chrr.camerapture.picture.PictureQuality.THUMBNAIL);
         if (texture.getStatus() != me.chrr.camerapture.picture.PictureTexture.Status.SUCCESS) {
             return;
         }

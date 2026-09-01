@@ -51,22 +51,22 @@ public class ServerPictureStore {
         return reservedIds.contains(id);
     }
 
-    public void put(MinecraftServer server, UUID id, StoredPicture picture) throws IOException {
+    public record PreparedPicture(UUID id, byte[] fullBytes, @Nullable byte[] thumbBytes) {
+    }
+
+    /// Validates upload constraints and generates thumbnail on the calling CPU image thread.
+    public PreparedPicture prepare(UUID id, byte[] bytes) throws IOException {
         if (!unreserveId(id)) {
             throw new IOException("UUID not reserved");
         }
 
         int maxImageBytes = Camerapture.CONFIG_MANAGER.getConfig().server.maxImageBytes;
-        if (picture.bytes().length > maxImageBytes) {
+        if (bytes.length > maxImageBytes) {
             throw new IOException("image larger than " + maxImageBytes + " bytes");
         }
 
-        // Resolution is enforced here as well as by the uploading client, which only ever received the
-        // limit as a suggestion. A byte limit alone doesn't bound the decoded size — a highly
-        // compressible image at WebP's 16383x16383 maximum fits easily inside the byte limit but costs
-        // every client that later renders it over a gigabyte of heap.
         int maxImageResolution = Camerapture.CONFIG_MANAGER.getConfig().server.maxImageResolution;
-        WebPHeader.Size size = WebPHeader.read(picture.bytes());
+        WebPHeader.Size size = WebPHeader.read(bytes);
         if (size == null) {
             throw new IOException("image is not a readable WebP");
         }
@@ -76,28 +76,56 @@ public class ServerPictureStore {
                     + ", larger than " + maxImageResolution + " in at least one dimension");
         }
 
-        // Store original
-        PictureKey fullKey = new PictureKey(id, PictureQuality.FULL);
-        cache(fullKey, picture);
-
-        Path fullPath = getFilePath(server, id, PictureQuality.FULL);
-        Files.createDirectories(fullPath.getParent());
-        Files.write(fullPath, picture.bytes());
-
-        // Generate and store thumbnail
+        byte[] thumbBytes = null;
         try {
             int thumbRes = Camerapture.CONFIG_MANAGER.getConfig().server.thumbnailResolution;
-            byte[] thumbBytes = ImageUtil.createThumbnail(picture.bytes(), thumbRes);
-            StoredPicture thumbPicture = new StoredPicture(thumbBytes);
-
-            PictureKey thumbKey = new PictureKey(id, PictureQuality.THUMBNAIL);
-            cache(thumbKey, thumbPicture);
-
-            Path thumbPath = getFilePath(server, id, PictureQuality.THUMBNAIL);
-            Files.write(thumbPath, thumbBytes);
+            thumbBytes = ImageUtil.createThumbnail(bytes, thumbRes);
         } catch (Exception e) {
             Camerapture.LOGGER.error("failed to generate thumbnail for picture {}", id, e);
         }
+
+        return new PreparedPicture(id, bytes, thumbBytes);
+    }
+
+    /// Persists prepared full picture and thumbnail to disk and memory cache (I/O thread).
+    public void save(MinecraftServer server, PreparedPicture prepared) throws IOException {
+        StoredPicture fullPicture = new StoredPicture(prepared.fullBytes());
+        PictureKey fullKey = new PictureKey(prepared.id(), PictureQuality.FULL);
+        cache(fullKey, fullPicture);
+
+        Path fullPath = getFilePath(server, prepared.id(), PictureQuality.FULL);
+        Files.createDirectories(fullPath.getParent());
+        Files.write(fullPath, prepared.fullBytes());
+
+        if (prepared.thumbBytes() != null) {
+            StoredPicture thumbPicture = new StoredPicture(prepared.thumbBytes());
+            PictureKey thumbKey = new PictureKey(prepared.id(), PictureQuality.THUMBNAIL);
+            cache(thumbKey, thumbPicture);
+
+            Path thumbPath = getFilePath(server, prepared.id(), PictureQuality.THUMBNAIL);
+            Files.write(thumbPath, prepared.thumbBytes());
+        }
+    }
+
+    /// Persist a lazily generated thumbnail to disk and cache (I/O thread).
+    public void saveThumbnail(MinecraftServer server, UUID id, StoredPicture thumbPicture) {
+        Camerapture.EXECUTOR.execute(() -> {
+            try {
+                PictureKey thumbKey = new PictureKey(id, PictureQuality.THUMBNAIL);
+                cache(thumbKey, thumbPicture);
+
+                Path thumbPath = getFilePath(server, id, PictureQuality.THUMBNAIL);
+                Files.createDirectories(thumbPath.getParent());
+                Files.write(thumbPath, thumbPicture.bytes());
+            } catch (Exception e) {
+                Camerapture.LOGGER.error("failed to save lazy thumbnail for {}", id, e);
+            }
+        });
+    }
+
+    public void put(MinecraftServer server, UUID id, StoredPicture picture) throws IOException {
+        PreparedPicture prepared = prepare(id, picture.bytes());
+        save(server, prepared);
     }
 
     @Nullable
@@ -108,9 +136,7 @@ public class ServerPictureStore {
             return cached;
         }
 
-        // Collapse concurrent misses for the same picture key. When a crowd walks into the same area they
-        // all ask for the same posters at once; without this, every one of those requests would do its
-        // own disk read and allocate its own copy of the bytes.
+        // Collapse concurrent misses for the same picture key.
         Object loadLock = loadLocks.computeIfAbsent(key, k -> new Object());
         try {
             synchronized (loadLock) {
@@ -124,25 +150,6 @@ public class ServerPictureStore {
                     StoredPicture picture = new StoredPicture(Files.readAllBytes(path));
                     cache(key, picture);
                     return picture;
-                }
-
-                // If thumbnail requested but missing, check if original exists and generate lazily (migration)
-                if (quality == PictureQuality.THUMBNAIL) {
-                    Path fullPath = getFilePath(server, id, PictureQuality.FULL);
-                    if (Files.exists(fullPath)) {
-                        try {
-                            byte[] originalBytes = Files.readAllBytes(fullPath);
-                            int thumbRes = Camerapture.CONFIG_MANAGER.getConfig().server.thumbnailResolution;
-                            byte[] thumbBytes = ImageUtil.createThumbnail(originalBytes, thumbRes);
-                            StoredPicture thumbPicture = new StoredPicture(thumbBytes);
-
-                            Files.write(path, thumbBytes);
-                            cache(key, thumbPicture);
-                            return thumbPicture;
-                        } catch (Exception e) {
-                            Camerapture.LOGGER.error("failed to generate lazy thumbnail for picture {}", id, e);
-                        }
-                    }
                 }
 
                 return null;

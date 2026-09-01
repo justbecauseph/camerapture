@@ -165,6 +165,10 @@ public class PictureTaker {
         }
     }
 
+    public void clearPendingPicture() {
+        this.picture = null;
+    }
+
     public void zoom(float delta) {
         zoomLevel += delta;
         zoomLevel = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoomLevel));

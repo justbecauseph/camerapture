@@ -93,52 +93,86 @@ public class Camerapture {
                     thread.setDaemon(true);
                     return thread;
                 },
-                new ThreadPoolExecutor.CallerRunsPolicy()
+                new ThreadPoolExecutor.AbortPolicy()
         );
 
         executor.allowCoreThreadTimeOut(true);
         return executor;
     }
 
-    public static final PlatformAdapter PLATFORM = Tapestry.implementation(id("platform_adapter"));
-    public static final NetworkAdapter NETWORK = Tapestry.implementation(id("network_adapter"));
+    /// Safely submit a task to the image executor without running on the caller thread on saturation.
+    public static boolean trySubmitImageTask(Runnable task) {
+        try {
+            IMAGE_EXECUTOR.execute(task);
+            return true;
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            return false;
+        }
+    }
+
+    private static PlatformAdapter loadPlatformAdapter() {
+        try {
+            return Tapestry.implementation(id("platform_adapter"));
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static NetworkAdapter loadNetworkAdapter() {
+        try {
+            return Tapestry.implementation(id("network_adapter"));
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    public static final PlatformAdapter PLATFORM = loadPlatformAdapter();
+    public static final NetworkAdapter NETWORK = loadNetworkAdapter();
 
     // Server-bound packets have a way lower limit on size.
     public static final int CLIENT_SECTION_SIZE = 30_000;
     public static final int SERVER_SECTION_SIZE = 1_000_000;
 
+    private static <T> T safeInit(java.util.function.Supplier<T> supplier) {
+        try {
+            return supplier.get();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     // Camera
-    public static Item CAMERA = new CameraItem();
-    public static final SoundEvent CAMERA_SHUTTER = SoundEvent.createVariableRangeEvent(id("camera_shutter"));
+    public static Item CAMERA = safeInit(CameraItem::new);
+    public static final SoundEvent CAMERA_SHUTTER = safeInit(() -> SoundEvent.createVariableRangeEvent(id("camera_shutter")));
     public static final Identifier PICTURES_TAKEN = id("pictures_taken");
 
     // Picture
-    public static Item PICTURE = new PictureItem();
-    public static final RecipeSerializer<PictureCloningRecipe> PICTURE_CLONING = new RecipeSerializer<>(
-            MapCodec.unit(PictureCloningRecipe.INSTANCE), StreamCodec.unit(PictureCloningRecipe.INSTANCE));
+    public static Item PICTURE = safeInit(PictureItem::new);
+    public static final RecipeSerializer<PictureCloningRecipe> PICTURE_CLONING = safeInit(() -> new RecipeSerializer<>(
+            MapCodec.unit(PictureCloningRecipe.INSTANCE), StreamCodec.unit(PictureCloningRecipe.INSTANCE)));
 
     // Album
-    public static final Item ALBUM = new AlbumItem();
-    public static final MenuType<AlbumMenu> ALBUM_SCREEN_HANDLER = new MenuType<>(AlbumMenu::new, FeatureFlagSet.of());
-    public static final MenuType<AlbumLecternMenu> ALBUM_LECTERN_SCREEN_HANDLER =
-            new MenuType<>((containerId, playerInventory) -> new AlbumLecternMenu(containerId), FeatureFlagSet.of());
-    public static final RecipeSerializer<AlbumCloningRecipe> ALBUM_CLONING = new RecipeSerializer<>(
-            MapCodec.unit(AlbumCloningRecipe.INSTANCE), StreamCodec.unit(AlbumCloningRecipe.INSTANCE));
+    public static final Item ALBUM = safeInit(AlbumItem::new);
+    public static final MenuType<AlbumMenu> ALBUM_SCREEN_HANDLER = safeInit(() -> new MenuType<>(AlbumMenu::new, FeatureFlagSet.of()));
+    public static final MenuType<AlbumLecternMenu> ALBUM_LECTERN_SCREEN_HANDLER = safeInit(() ->
+            new MenuType<>((containerId, playerInventory) -> new AlbumLecternMenu(containerId), FeatureFlagSet.of()));
+    public static final RecipeSerializer<AlbumCloningRecipe> ALBUM_CLONING = safeInit(() -> new RecipeSerializer<>(
+            MapCodec.unit(AlbumCloningRecipe.INSTANCE), StreamCodec.unit(AlbumCloningRecipe.INSTANCE)));
 
     // Picture Frame Block
-    public static final Block PICTURE_FRAME_BLOCK = new PictureFrameBlock();
-    public static final BlockEntityType<PictureFrameBlockEntity> PICTURE_FRAME_BLOCK_ENTITY =
-            new BlockEntityType<>(PictureFrameBlockEntity::new, java.util.Set.of(PICTURE_FRAME_BLOCK));
-    public static final MenuType<PictureFrameMenu> PICTURE_FRAME_SCREEN_HANDLER =
-            new MenuType<>((containerId, pi) -> new PictureFrameMenu(containerId), FeatureFlagSet.of());
+    public static final Block PICTURE_FRAME_BLOCK = safeInit(PictureFrameBlock::new);
+    public static final BlockEntityType<PictureFrameBlockEntity> PICTURE_FRAME_BLOCK_ENTITY = safeInit(() ->
+            new BlockEntityType<>(PictureFrameBlockEntity::new, java.util.Set.of(PICTURE_FRAME_BLOCK)));
+    public static final MenuType<PictureFrameMenu> PICTURE_FRAME_SCREEN_HANDLER = safeInit(() ->
+            new MenuType<>((containerId, pi) -> new PictureFrameMenu(containerId), FeatureFlagSet.of()));
 
     // Data Components
-    public static final DataComponentType<PictureItem.PictureData> PICTURE_DATA = DataComponentType.<PictureItem.PictureData>builder()
+    public static final DataComponentType<PictureItem.PictureData> PICTURE_DATA = safeInit(() -> DataComponentType.<PictureItem.PictureData>builder()
             .persistent(PictureItem.PictureData.CODEC).networkSynchronized(PictureItem.PictureData.PACKET_CODEC)
-            .build();
-    public static final DataComponentType<Boolean> CAMERA_ACTIVE = DataComponentType.<Boolean>builder()
+            .build());
+    public static final DataComponentType<Boolean> CAMERA_ACTIVE = safeInit(() -> DataComponentType.<Boolean>builder()
             .persistent(Codec.BOOL).networkSynchronized(ByteBufCodecs.BOOL)
-            .build();
+            .build());
 
     public static void registerPacketHandlers() {
         // Client requests to take / upload a picture
@@ -179,30 +213,45 @@ public class Camerapture {
                 return;
             }
 
-            if (packet.bytesLeft() > CONFIG_MANAGER.getConfig().server.maxImageBytes) {
-                LOGGER.error("{} sent a picture exceeding the size limit", player.getName().getString());
+            if (packet.bytesLeft() < 0 || packet.bytesLeft() > CONFIG_MANAGER.getConfig().server.maxImageBytes) {
+                LOGGER.error("{} sent a picture with invalid or oversized byte length ({} bytes left)", player.getName().getString(), packet.bytesLeft());
                 collectors.remove(packet.uuid());
                 ServerPictureStore.getInstance().unreserveId(packet.uuid());
+                return;
             }
 
             ByteCollector collector;
             synchronized (collectors) {
                 collector = collectors.computeIfAbsent(packet.uuid(), (uuid) -> new ByteCollector((bytes) -> {
                     collectors.remove(uuid);
-                    IMAGE_EXECUTOR.execute(() -> {
+                    boolean submitted = trySubmitImageTask(() -> {
                         try {
-                            MinecraftServer server = player.server;
+                            ServerPictureStore.PreparedPicture prepared = ServerPictureStore.getInstance().prepare(uuid, bytes);
+                            EXECUTOR.execute(() -> {
+                                try {
+                                    MinecraftServer server = player.server;
+                                    ServerPictureStore.getInstance().save(server, prepared);
+                                    ItemStack picture = PictureItem.create(player.getName().getString(), uuid);
 
-                            ServerPictureStore.getInstance().put(server, uuid, new StoredPicture(bytes));
-                            ItemStack picture = PictureItem.create(player.getName().getString(), uuid);
-
-                            // We have to do this on a separate thread, because it might spawn an item entity.
-                            server.execute(() -> player.getInventory().placeItemBackInInventory(picture));
+                                    // We have to do this on a separate thread, because it might spawn an item entity.
+                                    server.execute(() -> player.getInventory().placeItemBackInInventory(picture));
+                                } catch (Exception e) {
+                                    LOGGER.error("failed to save picture from {}", player.getName().getString(), e);
+                                    player.sendSystemMessage(Component.translatable("text.camerapture.picture_failed").withStyle(ChatFormatting.RED), false);
+                                }
+                            });
                         } catch (Exception e) {
-                            LOGGER.error("failed to save picture from {}", player.getName().getString(), e);
+                            LOGGER.error("failed to process picture from {}", player.getName().getString(), e);
+                            ServerPictureStore.getInstance().unreserveId(uuid);
                             player.sendSystemMessage(Component.translatable("text.camerapture.picture_failed").withStyle(ChatFormatting.RED), false);
                         }
                     });
+
+                    if (!submitted) {
+                        LOGGER.error("Image worker saturated, rejecting picture save for {}", uuid);
+                        ServerPictureStore.getInstance().unreserveId(uuid);
+                        player.sendSystemMessage(Component.translatable("text.camerapture.picture_failed").withStyle(ChatFormatting.RED), false);
+                    }
                 }));
             }
 
@@ -211,12 +260,14 @@ public class Camerapture {
                     LOGGER.error("{} sent a malformed byte section", player.getName().getString());
                     collectors.remove(packet.uuid());
                     ServerPictureStore.getInstance().unreserveId(packet.uuid());
+                    return;
                 }
 
                 if (collector.getCurrentLength() > CONFIG_MANAGER.getConfig().server.maxImageBytes) {
                     LOGGER.error("{} sent a picture exceeding the size limit", player.getName().getString());
                     collectors.remove(packet.uuid());
                     ServerPictureStore.getInstance().unreserveId(packet.uuid());
+                    return;
                 }
             }
         });
@@ -224,19 +275,40 @@ public class Camerapture {
         // Client requests a picture with a certain UUID and quality
         NETWORK.onReceiveFromClient(RequestDownloadPacket.class, (packet, player) -> {
             // Packet handlers run on the server thread on both loaders, and a cache miss here reads the
-            // picture off the disk. Do that on the executor instead, like uploads already do — nothing
-            // below touches game state, and DownloadQueue does the actual sending on its own thread.
+            // picture off the disk. Do that on the executor instead, like uploads already do.
             EXECUTOR.execute(() -> {
                 try {
                     StoredPicture picture = ServerPictureStore.getInstance().get(player.server, packet.uuid(), packet.quality());
 
-                    if (picture == null) {
-                        LOGGER.warn("{} requested a picture with an unknown UUID: {} ({})", player.getName().getString(), packet.uuid(), packet.quality());
-                        NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));
+                    if (picture != null) {
+                        DownloadQueue.getInstance().send(player, packet.uuid(), packet.quality(), picture);
                         return;
                     }
 
-                    DownloadQueue.getInstance().send(player, packet.uuid(), packet.quality(), picture);
+                    // If thumbnail requested but missing, check if original exists and generate lazily on IMAGE_EXECUTOR
+                    if (packet.quality() == me.chrr.camerapture.picture.PictureQuality.THUMBNAIL) {
+                        StoredPicture fullPicture = ServerPictureStore.getInstance().get(player.server, packet.uuid(), me.chrr.camerapture.picture.PictureQuality.FULL);
+                        if (fullPicture != null) {
+                            boolean submitted = trySubmitImageTask(() -> {
+                                try {
+                                    int thumbRes = CONFIG_MANAGER.getConfig().server.thumbnailResolution;
+                                    byte[] thumbBytes = me.chrr.camerapture.util.ImageUtil.createThumbnail(fullPicture.bytes(), thumbRes);
+                                    StoredPicture thumbPicture = new StoredPicture(thumbBytes);
+                                    ServerPictureStore.getInstance().saveThumbnail(player.server, packet.uuid(), thumbPicture);
+                                    DownloadQueue.getInstance().send(player, packet.uuid(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL, thumbPicture);
+                                } catch (Exception e) {
+                                    LOGGER.error("failed to generate lazy thumbnail for {} ({})", packet.uuid(), packet.quality(), e);
+                                    NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));
+                                }
+                            });
+                            if (submitted) {
+                                return;
+                            }
+                        }
+                    }
+
+                    LOGGER.warn("{} requested a picture with an unknown UUID: {} ({})", player.getName().getString(), packet.uuid(), packet.quality());
+                    NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));
                 } catch (Exception e) {
                     LOGGER.error("failed to load picture for {} ({}): {}", player.getName().getString(), packet.uuid(), packet.quality(), e);
                     NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));

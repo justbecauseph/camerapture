@@ -44,9 +44,9 @@ public class ClientPictureStore {
         return (quality == PictureQuality.THUMBNAIL) ? thumbnailCache : fullCache;
     }
 
-    /// Resolve a RemotePicture and its effective rendering texture, requesting download if not yet loaded
+    /// Resolve the effective rendering texture for a picture, requesting download if not yet loaded
     /// and touching the active texture in LRU cache with epoch/time throttling.
-    public ResolvedPicture resolveForRender(@NotNull UUID id, @NotNull PictureQuality preferred) {
+    public PictureTexture resolveTextureForRender(@NotNull UUID id, @NotNull PictureQuality preferred) {
         RemotePicture picture = pictures.computeIfAbsent(id, RemotePicture::new);
         PictureTexture preferredTexture = picture.getTexture(preferred);
 
@@ -61,12 +61,28 @@ public class ClientPictureStore {
             getCache(effective.getQuality()).touch(id, effective, now);
         }
 
+        return effective;
+    }
+
+    /// Resolve a RemotePicture and its effective rendering texture.
+    public ResolvedPicture resolveForRender(@NotNull UUID id, @NotNull PictureQuality preferred) {
+        RemotePicture picture = pictures.computeIfAbsent(id, RemotePicture::new);
+        PictureTexture effective = resolveTextureForRender(id, preferred);
         return new ResolvedPicture(picture, effective);
     }
 
     /// Retrieve or create a RemotePicture entry and request the specified quality if not yet loaded.
     public RemotePicture getPicture(@NotNull UUID id, @NotNull PictureQuality quality) {
-        return resolveForRender(id, quality).picture();
+        RemotePicture picture = pictures.computeIfAbsent(id, RemotePicture::new);
+        PictureTexture texture = picture.getTexture(quality);
+        if (texture.getStatus() == PictureTexture.Status.NOT_LOADED) {
+            texture.setStatus(PictureTexture.Status.FETCHING);
+            fetchPicture(id, quality);
+        } else if (texture.getStatus() == PictureTexture.Status.SUCCESS) {
+            long now = System.currentTimeMillis();
+            getCache(quality).touch(id, texture, now);
+        }
+        return picture;
     }
 
     /// Legacy compatibility helper: requests full quality picture.
@@ -79,7 +95,7 @@ public class ClientPictureStore {
         return getPicture(id, PictureQuality.FULL);
     }
 
-    /// Request a picture with a specific quality from disk or the server.
+    /// Request a picture with a specific quality from disk or fallback to the server.
     private void fetchPicture(UUID id, PictureQuality quality) {
         Camerapture.EXECUTOR.execute(() -> {
             Path diskPath = getCacheFilePath(id, quality);
@@ -94,41 +110,67 @@ public class ClientPictureStore {
             }
 
             if (file.exists()) {
+                byte[] bytes;
                 try {
-                    byte[] bytes = Files.readAllBytes(file.toPath());
-                    Camerapture.IMAGE_EXECUTOR.execute(() -> {
-                        try {
-                            BufferedImage image = (quality == PictureQuality.FULL)
-                                    ? decodeFullChecked(id, bytes)
-                                    : decodeThumbnailChecked(id, bytes);
-                            processReceivedImage(id, quality, image);
-                        } catch (Exception e) {
-                            Camerapture.LOGGER.error("could not decode cached picture {} ({})", id, quality, e);
-                        }
-                    });
-                    return;
+                    bytes = Files.readAllBytes(file.toPath());
                 } catch (Exception e) {
-                    Camerapture.LOGGER.error("could not read cached picture {} ({})", id, quality, e);
+                    Camerapture.LOGGER.error("could not read cached picture {} ({}), falling back to server", id, quality, e);
+                    try {
+                        Files.deleteIfExists(file.toPath());
+                    } catch (Exception ignored) {
+                    }
+                    requestFromServer(id, quality);
+                    return;
                 }
-            }
 
-            PictureKey key = new PictureKey(id, quality);
-            if (!inFlightNetworkRequests.add(key)) {
+                final File fileRef = file;
+                boolean submitted = Camerapture.trySubmitImageTask(() -> {
+                    try {
+                        BufferedImage image = (quality == PictureQuality.FULL)
+                                ? decodeFullChecked(id, bytes)
+                                : decodeThumbnailChecked(id, bytes);
+                        processReceivedImage(id, quality, image);
+                    } catch (Exception e) {
+                        Camerapture.LOGGER.error("could not decode cached picture {} ({}), falling back to server", id, quality, e);
+                        try {
+                            Files.deleteIfExists(fileRef.toPath());
+                        } catch (Exception ignored) {
+                        }
+                        requestFromServer(id, quality);
+                    }
+                });
+
+                if (!submitted) {
+                    RemotePicture picture = pictures.get(id);
+                    if (picture != null) {
+                        picture.getTexture(quality).setStatus(PictureTexture.Status.NOT_LOADED);
+                    }
+                }
                 return;
             }
 
-            try {
-                CameraptureDebugStats.recordRequest(quality);
-                Camerapture.NETWORK.sendToServer(new RequestDownloadPacket(id, quality));
-            } catch (Exception e) {
-                inFlightNetworkRequests.remove(key);
-                RemotePicture picture = pictures.get(id);
-                if (picture != null) {
-                    picture.getTexture(quality).setStatus(PictureTexture.Status.NOT_LOADED);
-                }
-                Camerapture.LOGGER.error("failed to send request for picture {} ({})", id, quality, e);
-            }
+            requestFromServer(id, quality);
         });
+    }
+
+    /// Send a request to the server for a picture download.
+    private void requestFromServer(UUID id, PictureQuality quality) {
+        PictureKey key = new PictureKey(id, quality);
+        if (!inFlightNetworkRequests.add(key)) {
+            return;
+        }
+
+        try {
+            CameraptureDebugStats.recordRequest(quality);
+            Camerapture.NETWORK.sendToServer(new RequestDownloadPacket(id, quality));
+        } catch (Exception e) {
+            inFlightNetworkRequests.remove(key);
+            RemotePicture picture = pictures.get(id);
+            if (picture != null) {
+                picture.getTexture(quality).setStatus(PictureTexture.Status.NOT_LOADED);
+            }
+            Camerapture.LOGGER.error("failed to send request for picture {} ({})", id, quality, e);
+        }
     }
 
     /// Update the stored texture with the given BufferedImage and upload to GPU.
@@ -158,8 +200,8 @@ public class ClientPictureStore {
 
     /// Process bytes received from the server directly via IMAGE_EXECUTOR without client-tick delay.
     public void processReceivedBytes(UUID id, PictureQuality quality, byte[] bytes) {
-        Camerapture.IMAGE_EXECUTOR.execute(() -> {
-            PictureKey key = new PictureKey(id, quality);
+        PictureKey key = new PictureKey(id, quality);
+        boolean submitted = Camerapture.trySubmitImageTask(() -> {
             try {
                 BufferedImage image = (quality == PictureQuality.FULL)
                         ? decodeFullChecked(id, bytes)
@@ -173,6 +215,15 @@ public class ClientPictureStore {
                 inFlightNetworkRequests.remove(key);
             }
         });
+
+        if (!submitted) {
+            inFlightNetworkRequests.remove(key);
+            RemotePicture picture = pictures.get(id);
+            if (picture != null) {
+                picture.getTexture(quality).setStatus(PictureTexture.Status.NOT_LOADED);
+            }
+            Camerapture.LOGGER.warn("Image worker saturated, deferred decode for {} ({})", id, quality);
+        }
     }
 
     /// Processes all images from the queue (retained for backwards compatibility).

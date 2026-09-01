@@ -53,8 +53,7 @@ public class CameraptureDistantDecorationRenderer implements DecorationClientRen
         }
 
         // Strictly request thumbnail quality for distant decorations and resolve with throttled LRU touch
-        me.chrr.camerapture.picture.ResolvedPicture resolved = ClientPictureStore.getInstance().resolveForRender(data.pictureId(), PictureQuality.THUMBNAIL);
-        PictureTexture texture = resolved.texture();
+        PictureTexture texture = ClientPictureStore.getInstance().resolveTextureForRender(data.pictureId(), PictureQuality.THUMBNAIL);
 
         BlockPos anchorPos = record.pos();
         Vec3 cameraPos = camera.position();

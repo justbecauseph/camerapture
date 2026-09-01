@@ -28,9 +28,13 @@ public enum NativeImageUtil {
             image.getRGB(0, 0, width, height, srcPixels, 0, width);
         }
 
+        boolean isRgbType = image.getType() == BufferedImage.TYPE_INT_RGB;
         IntBuffer intBuffer = nativeImage.getPixelBytes().order(ByteOrder.nativeOrder()).asIntBuffer();
         for (int i = 0; i < totalPixels; i++) {
             int argb = srcPixels[i];
+            if (isRgbType) {
+                argb |= 0xFF000000;
+            }
             // Convert ARGB to ABGR (which corresponds to RGBA byte ordering on Little-Endian systems)
             int abgr = (argb & 0xFF00FF00) | ((argb & 0x00FF0000) >>> 16) | ((argb & 0x000000FF) << 16);
             intBuffer.put(i, abgr);
