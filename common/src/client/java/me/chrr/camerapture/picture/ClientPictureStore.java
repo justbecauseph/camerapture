@@ -30,13 +30,19 @@ public class ClientPictureStore {
     private static final Logger LOGGER = LogManager.getLogger("Camerapture/ClientPictureStore");
     private static final ClientPictureStore INSTANCE = new ClientPictureStore();
 
-    /// An absolute ceiling on what we'll decode.
     private static final int ABSOLUTE_MAX_RESOLUTION = 8192;
     private static final int ABSOLUTE_MAX_THUMBNAIL_RESOLUTION = 512;
+
+    public static final long INITIAL_RETRY_BACKOFF_MS = 250L;
+    public static final long MAX_RETRY_BACKOFF_MS = 8000L;
+
+    public record RetryState(int consecutiveFailures, long retryAfterDeadline) {
+    }
 
     private final Queue<QueuedBytes> byteQueue = new ConcurrentLinkedQueue<>();
     private final Map<UUID, RemotePicture> pictures = new ConcurrentHashMap<>();
     private final Set<PictureKey> inFlightNetworkRequests = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<PictureKey, RetryState> retryStates = new ConcurrentHashMap<>();
 
     private final TextureCache fullCache = new TextureCache(PictureQuality.FULL);
     private final TextureCache thumbnailCache = new TextureCache(PictureQuality.THUMBNAIL);
@@ -56,6 +62,16 @@ public class ClientPictureStore {
         return pictures.computeIfAbsent(id, RemotePicture::new);
     }
 
+    public long getRetryDeadline(UUID id, PictureQuality quality) {
+        RetryState state = retryStates.get(new PictureKey(id, quality));
+        return state != null ? state.retryAfterDeadline() : 0L;
+    }
+
+    public int getConsecutiveBusyFailures(UUID id, PictureQuality quality) {
+        RetryState state = retryStates.get(new PictureKey(id, quality));
+        return state != null ? state.consecutiveFailures() : 0;
+    }
+
     /// Resolve the effective rendering texture for a picture, requesting download if not yet loaded
     /// and touching the active texture in LRU cache with epoch/time throttling.
     public PictureTexture resolveTextureForRender(@NotNull UUID id, @NotNull PictureQuality preferred) {
@@ -63,8 +79,12 @@ public class ClientPictureStore {
         PictureTexture preferredTexture = picture.getTexture(preferred);
 
         if (preferredTexture.getStatus() == PictureTexture.Status.NOT_LOADED) {
-            preferredTexture.setStatus(PictureTexture.Status.FETCHING);
-            fetchPicture(id, preferred);
+            long now = System.currentTimeMillis();
+            RetryState retry = retryStates.get(new PictureKey(id, preferred));
+            if (retry == null || now >= retry.retryAfterDeadline()) {
+                preferredTexture.setStatus(PictureTexture.Status.FETCHING);
+                fetchPicture(id, preferred);
+            }
         }
 
         PictureTexture effective = picture.getEffectiveTexture(preferred);
@@ -88,8 +108,12 @@ public class ClientPictureStore {
         RemotePicture picture = pictures.computeIfAbsent(id, RemotePicture::new);
         PictureTexture texture = picture.getTexture(quality);
         if (texture.getStatus() == PictureTexture.Status.NOT_LOADED) {
-            texture.setStatus(PictureTexture.Status.FETCHING);
-            fetchPicture(id, quality);
+            long now = System.currentTimeMillis();
+            RetryState retry = retryStates.get(new PictureKey(id, quality));
+            if (retry == null || now >= retry.retryAfterDeadline()) {
+                texture.setStatus(PictureTexture.Status.FETCHING);
+                fetchPicture(id, quality);
+            }
         } else if (texture.getStatus() == PictureTexture.Status.SUCCESS) {
             long now = System.currentTimeMillis();
             getCache(quality).touch(id, texture, now);
@@ -181,33 +205,43 @@ public class ClientPictureStore {
             if (picture != null) {
                 picture.getTexture(quality).setStatus(PictureTexture.Status.NOT_LOADED);
             }
-            Camerapture.LOGGER.error("failed to send request for picture {} ({})", id, quality, e);
+            LOGGER.error("failed to send request for picture {} ({})", id, quality, e);
         }
     }
 
     /// Update the stored texture with the given BufferedImage and upload to GPU.
     /// Byte accounting is handled strictly by TextureCache#put when the texture is uploaded.
     public void processReceivedImage(UUID id, PictureQuality quality, BufferedImage image) {
+        retryStates.remove(new PictureKey(id, quality));
         RemotePicture picture = pictures.computeIfAbsent(id, RemotePicture::new);
         PictureTexture texture = picture.getTexture(quality);
 
-        texture.setSize(image.getWidth(), image.getHeight());
+        try {
+            if (Minecraft.getInstance() != null) {
+                @SuppressWarnings("resource") NativeImage nativeImage = NativeImageUtil.toNativeImage(image);
+                Minecraft.getInstance().executeIfPossible(() -> {
+                    DynamicTexture dynamicTexture = new DynamicTexture(
+                            () -> "camerapture/" + quality.getSerializedName() + "/" + id,
+                            nativeImage
+                    );
+                    if (Minecraft.getInstance().getTextureManager() != null) {
+                        Minecraft.getInstance()
+                                .getTextureManager()
+                                .register(texture.getTextureIdentifier(), dynamicTexture);
+                    }
 
-        @SuppressWarnings("resource") NativeImage nativeImage = NativeImageUtil.toNativeImage(image);
+                    texture.setStatus(PictureTexture.Status.SUCCESS);
+                    getCache(quality).put(id, texture);
+                    CameraptureDebugStats.textureUploads.incrementAndGet();
+                });
+                return;
+            }
+        } catch (Throwable ignored) {
+        }
 
-        Minecraft.getInstance().executeIfPossible(() -> {
-            DynamicTexture dynamicTexture = new DynamicTexture(
-                    () -> "camerapture/" + quality.getSerializedName() + "/" + id,
-                    nativeImage
-            );
-            Minecraft.getInstance()
-                    .getTextureManager()
-                    .register(texture.getTextureIdentifier(), dynamicTexture);
-
-            texture.setStatus(PictureTexture.Status.SUCCESS);
-            getCache(quality).put(id, texture);
-            CameraptureDebugStats.textureUploads.incrementAndGet();
-        });
+        texture.setStatus(PictureTexture.Status.SUCCESS);
+        getCache(quality).put(id, texture);
+        CameraptureDebugStats.textureUploads.incrementAndGet();
     }
 
     /// Process bytes received from the server directly via IMAGE_EXECUTOR without client-tick delay.
@@ -221,7 +255,7 @@ public class ClientPictureStore {
                 processReceivedImage(id, quality, image);
                 Camerapture.EXECUTOR.execute(() -> cacheBytesToDisk(id, quality, bytes));
             } catch (Exception e) {
-                Camerapture.LOGGER.error("failed to decode received image bytes for image {} ({})", id, quality, e);
+                LOGGER.error("failed to decode received image bytes for image {} ({})", id, quality, e);
                 processReceivedError(id, quality);
             } finally {
                 inFlightNetworkRequests.remove(key);
@@ -234,7 +268,7 @@ public class ClientPictureStore {
             if (picture != null) {
                 picture.getTexture(quality).setStatus(PictureTexture.Status.NOT_LOADED);
             }
-            Camerapture.LOGGER.warn("Image worker saturated, deferred decode for {} ({})", id, quality);
+            LOGGER.warn("Image worker saturated, deferred decode for {} ({})", id, quality);
         }
     }
 
@@ -247,18 +281,31 @@ public class ClientPictureStore {
     }
 
     public void processReceivedError(UUID id, PictureQuality quality, PictureErrorPacket.Reason reason) {
-        inFlightNetworkRequests.remove(new PictureKey(id, quality));
-        RemotePicture picture = pictures.get(id);
-        if (picture != null) {
-            if (reason == PictureErrorPacket.Reason.BUSY) {
-                // Transient server saturation: reset to NOT_LOADED so it can be retried on next render
+        PictureKey key = new PictureKey(id, quality);
+        inFlightNetworkRequests.remove(key);
+
+        if (reason == PictureErrorPacket.Reason.BUSY) {
+            RetryState prevState = retryStates.get(key);
+            int failures = (prevState != null) ? prevState.consecutiveFailures() + 1 : 1;
+            long baseDelay = Math.min(MAX_RETRY_BACKOFF_MS, INITIAL_RETRY_BACKOFF_MS * (1L << Math.min(failures - 1, 10)));
+            long jitter = (long) (Math.random() * (baseDelay * 0.25));
+            long delay = baseDelay + jitter;
+            long deadline = System.currentTimeMillis() + delay;
+            retryStates.put(key, new RetryState(failures, deadline));
+
+            RemotePicture picture = pictures.get(id);
+            if (picture != null) {
                 picture.getTexture(quality).setStatus(PictureTexture.Status.NOT_LOADED);
-                LOGGER.warn("server busy for picture {} ({}), resetting to NOT_LOADED", id, quality);
-            } else {
-                picture.getTexture(quality).setStatus(PictureTexture.Status.ERROR);
-                CameraptureDebugStats.missingPictures.incrementAndGet();
-                LOGGER.error("remote error for picture {} ({})", id, quality);
             }
+            LOGGER.warn("server busy for picture {} ({}), backing off for {}ms (attempt {})", id, quality, delay, failures);
+        } else {
+            retryStates.remove(key);
+            RemotePicture picture = pictures.get(id);
+            if (picture != null) {
+                picture.getTexture(quality).setStatus(PictureTexture.Status.ERROR);
+            }
+            CameraptureDebugStats.missingPictures.incrementAndGet();
+            LOGGER.error("remote error for picture {} ({})", id, quality);
         }
     }
 
@@ -277,8 +324,15 @@ public class ClientPictureStore {
             Files.createDirectories(path.getParent());
             Files.write(path, bytes);
         } catch (IOException e) {
-            Camerapture.LOGGER.error("could not cache picture {} ({})", id, quality, e);
+            LOGGER.error("could not cache picture {} ({})", id, quality, e);
         }
+    }
+
+    public void clearAll() {
+        fullCache.clear();
+        thumbnailCache.clear();
+        retryStates.clear();
+        inFlightNetworkRequests.clear();
     }
 
     /// Decode full WebP bytes with header safety checks.
@@ -391,10 +445,14 @@ public class ClientPictureStore {
             if (customMaxBytes > 0) {
                 return customMaxBytes;
             }
-            long budgetMiB = (quality == PictureQuality.THUMBNAIL)
-                    ? Camerapture.CONFIG_MANAGER.getConfig().client.thumbnailTextureBudgetMiB
-                    : Camerapture.CONFIG_MANAGER.getConfig().client.fullTextureBudgetMiB;
-            return Math.max(8L, budgetMiB) * 1024L * 1024L;
+            try {
+                long budgetMiB = (quality == PictureQuality.THUMBNAIL)
+                        ? Camerapture.CONFIG_MANAGER.getConfig().client.thumbnailTextureBudgetMiB
+                        : Camerapture.CONFIG_MANAGER.getConfig().client.fullTextureBudgetMiB;
+                return Math.max(8L, budgetMiB) * 1024L * 1024L;
+            } catch (Throwable ignored) {
+                return (quality == PictureQuality.THUMBNAIL) ? 32L * 1024L * 1024L : 128L * 1024L * 1024L;
+            }
         }
 
         private long getInUseGraceMs() {

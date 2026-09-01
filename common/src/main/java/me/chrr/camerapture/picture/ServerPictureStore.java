@@ -253,8 +253,8 @@ public class ServerPictureStore {
                         cache(key, thumbPicture);
                         saveThumbnail(dataFolder, pictureId, thumbPicture);
                         future.complete(ThumbnailResult.success(thumbPicture));
-                    } catch (Throwable t) {
-                        LOGGER.error("failed to generate lazy thumbnail for picture {}", pictureId, t);
+                    } catch (Exception e) {
+                        LOGGER.error("failed to generate lazy thumbnail for picture {}", pictureId, e);
                         future.complete(ThumbnailResult.busy());
                     }
                 });
@@ -263,8 +263,8 @@ public class ServerPictureStore {
                     LOGGER.warn("Image worker saturated, could not generate lazy thumbnail for {}", pictureId);
                     future.complete(ThumbnailResult.busy());
                 }
-            } catch (Throwable t) {
-                LOGGER.error("failed to read picture for lazy thumbnail generation {}", pictureId, t);
+            } catch (Exception e) {
+                LOGGER.error("failed to read picture for lazy thumbnail generation {}", pictureId, e);
                 future.complete(ThumbnailResult.busy());
             }
         });

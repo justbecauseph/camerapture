@@ -135,5 +135,11 @@ public class PacketCodecTest {
         assertEquals(id, decodedBusy.uuid());
         assertEquals(PictureQuality.THUMBNAIL, decodedBusy.quality());
         assertEquals(PictureErrorPacket.Reason.BUSY, decodedBusy.reason());
+
+        // Test out-of-bounds ordinal safe fallback
+        buf.clear();
+        net.minecraft.network.codec.ByteBufCodecs.VAR_INT.encode(buf, 999);
+        PictureErrorPacket.Reason fallbackReason = PictureErrorPacket.Reason.STREAM_CODEC.decode(buf);
+        assertEquals(PictureErrorPacket.Reason.NOT_FOUND, fallbackReason, "Invalid ordinal must fall back safely to NOT_FOUND");
     }
 }

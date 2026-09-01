@@ -16,7 +16,17 @@ public record PictureErrorPacket(UUID uuid, PictureQuality quality, Reason reaso
         NOT_FOUND("not_found"),
         BUSY("busy");
 
-        public static final StreamCodec<ByteBuf, Reason> STREAM_CODEC = ByteBufCodecs.idMapper(i -> values()[i], Reason::ordinal);
+        public static final StreamCodec<ByteBuf, Reason> STREAM_CODEC = StreamCodec.of(
+                (buf, reason) -> ByteBufCodecs.VAR_INT.encode(buf, reason.ordinal()),
+                buf -> {
+                    int ordinal = ByteBufCodecs.VAR_INT.decode(buf);
+                    Reason[] values = values();
+                    if (ordinal >= 0 && ordinal < values.length) {
+                        return values[ordinal];
+                    }
+                    return NOT_FOUND;
+                }
+        );
 
         private final String name;
 

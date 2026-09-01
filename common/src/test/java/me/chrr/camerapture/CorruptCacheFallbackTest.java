@@ -9,6 +9,7 @@ import me.chrr.camerapture.picture.WebPHeader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -95,6 +96,58 @@ public class CorruptCacheFallbackTest {
         assertEquals(PictureTexture.Status.NOT_LOADED, busyPic.getFull().getStatus(),
                 "BUSY must transition texture to NOT_LOADED for retry rather than terminal ERROR");
         assertFalse(store.isInFlight(busyId, PictureQuality.FULL));
+    }
+
+    @Test
+    public void testTransientBusyExponentialBackoffAndDeadline() {
+        ClientPictureStore store = ClientPictureStore.getInstance();
+        store.clearAll();
+
+        UUID id = UUID.randomUUID();
+        RemotePicture pic = store.getPictureDirect(id);
+        pic.getFull().setStatus(PictureTexture.Status.FETCHING);
+
+        long before = System.currentTimeMillis();
+        // 1st BUSY
+        store.processReceivedError(id, PictureQuality.FULL, PictureErrorPacket.Reason.BUSY);
+        assertEquals(1, store.getConsecutiveBusyFailures(id, PictureQuality.FULL));
+        long deadline1 = store.getRetryDeadline(id, PictureQuality.FULL);
+        assertTrue(deadline1 >= before + ClientPictureStore.INITIAL_RETRY_BACKOFF_MS, "1st backoff deadline must be at least INITIAL_RETRY_BACKOFF_MS");
+        assertEquals(PictureTexture.Status.NOT_LOADED, pic.getFull().getStatus());
+
+        // resolveTextureForRender during backoff window must NOT change status to FETCHING
+        PictureTexture effective = store.resolveTextureForRender(id, PictureQuality.FULL);
+        assertEquals(PictureTexture.Status.NOT_LOADED, effective.getStatus(),
+                "resolveTextureForRender must not trigger fetch before backoff deadline");
+
+        // 2nd BUSY
+        store.processReceivedError(id, PictureQuality.FULL, PictureErrorPacket.Reason.BUSY);
+        assertEquals(2, store.getConsecutiveBusyFailures(id, PictureQuality.FULL));
+        long deadline2 = store.getRetryDeadline(id, PictureQuality.FULL);
+        assertTrue(deadline2 >= before + (ClientPictureStore.INITIAL_RETRY_BACKOFF_MS * 2), "2nd backoff deadline must be at least 2x INITIAL");
+
+        // NOT_FOUND clears retry state and marks ERROR
+        store.processReceivedError(id, PictureQuality.FULL, PictureErrorPacket.Reason.NOT_FOUND);
+        assertEquals(0, store.getConsecutiveBusyFailures(id, PictureQuality.FULL));
+        assertEquals(0L, store.getRetryDeadline(id, PictureQuality.FULL));
+        assertEquals(PictureTexture.Status.ERROR, pic.getFull().getStatus());
+    }
+
+    @Test
+    public void testSuccessfulImageReceptionClearsRetryState() {
+        ClientPictureStore store = ClientPictureStore.getInstance();
+        store.clearAll();
+
+        UUID id = UUID.randomUUID();
+        store.processReceivedError(id, PictureQuality.THUMBNAIL, PictureErrorPacket.Reason.BUSY);
+        assertEquals(1, store.getConsecutiveBusyFailures(id, PictureQuality.THUMBNAIL));
+
+        BufferedImage dummy = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+        store.processReceivedImage(id, PictureQuality.THUMBNAIL, dummy);
+
+        assertEquals(0, store.getConsecutiveBusyFailures(id, PictureQuality.THUMBNAIL),
+                "Successful image reception must clear retry backoff state");
+        assertEquals(0L, store.getRetryDeadline(id, PictureQuality.THUMBNAIL));
     }
 
     @Test
