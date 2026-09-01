@@ -3,12 +3,10 @@ package me.chrr.camerapture.net;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.handler.codec.DecoderException;
-import me.chrr.camerapture.Camerapture;
+import me.chrr.camerapture.TransportLimits;
 import me.chrr.camerapture.net.clientbound.DownloadPartialPicturePacket;
 import me.chrr.camerapture.net.serverbound.UploadPartialPicturePacket;
 import me.chrr.camerapture.picture.PictureQuality;
-import me.chrr.camerapture.MinecraftTestBootstrap;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -17,15 +15,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class PacketCodecTest {
 
-    @BeforeAll
-    public static void setUp() {
-        MinecraftTestBootstrap.init();
-    }
-
     @Test
     public void testUploadPartialPicturePacketSuccess() {
         UUID id = UUID.randomUUID();
-        byte[] bytes = new byte[Camerapture.CLIENT_SECTION_SIZE];
+        byte[] bytes = new byte[TransportLimits.CLIENT_SECTION_SIZE];
         bytes[0] = 42;
         bytes[bytes.length - 1] = 99;
 
@@ -43,7 +36,7 @@ public class PacketCodecTest {
     @Test
     public void testUploadPartialPicturePacketExceedingLimitThrows() {
         UUID id = UUID.randomUUID();
-        byte[] bytes = new byte[Camerapture.CLIENT_SECTION_SIZE + 1];
+        byte[] bytes = new byte[TransportLimits.CLIENT_SECTION_SIZE + 1];
 
         UploadPartialPicturePacket packet = new UploadPartialPicturePacket(id, bytes, 0);
         ByteBuf buf = Unpooled.buffer();
@@ -56,7 +49,7 @@ public class PacketCodecTest {
         // Decoding buffer declaring array larger than CLIENT_SECTION_SIZE throws DecoderException
         ByteBuf malformedBuf = Unpooled.buffer();
         net.minecraft.core.UUIDUtil.STREAM_CODEC.encode(malformedBuf, id);
-        net.minecraft.network.VarInt.write(malformedBuf, Camerapture.CLIENT_SECTION_SIZE + 1);
+        net.minecraft.network.VarInt.write(malformedBuf, TransportLimits.CLIENT_SECTION_SIZE + 1);
         malformedBuf.writeBytes(new byte[10]);
 
         assertThrows(DecoderException.class, () -> {
@@ -86,7 +79,7 @@ public class PacketCodecTest {
     @Test
     public void testDownloadPartialPicturePacketExceedingLimitThrows() {
         UUID id = UUID.randomUUID();
-        byte[] bytes = new byte[Camerapture.SERVER_SECTION_SIZE + 1];
+        byte[] bytes = new byte[TransportLimits.SERVER_SECTION_SIZE + 1];
 
         DownloadPartialPicturePacket packet = new DownloadPartialPicturePacket(id, PictureQuality.FULL, bytes, 0);
         ByteBuf buf = Unpooled.buffer();
@@ -100,7 +93,7 @@ public class PacketCodecTest {
         ByteBuf malformedBuf = Unpooled.buffer();
         net.minecraft.core.UUIDUtil.STREAM_CODEC.encode(malformedBuf, id);
         PictureQuality.STREAM_CODEC.encode(malformedBuf, PictureQuality.FULL);
-        net.minecraft.network.VarInt.write(malformedBuf, Camerapture.SERVER_SECTION_SIZE + 1);
+        net.minecraft.network.VarInt.write(malformedBuf, TransportLimits.SERVER_SECTION_SIZE + 1);
         malformedBuf.writeBytes(new byte[10]);
 
         assertThrows(DecoderException.class, () -> {

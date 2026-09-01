@@ -20,7 +20,7 @@ public class PictureTexture {
         this.id = id;
         this.quality = quality;
         String prefix = (quality == PictureQuality.THUMBNAIL) ? "pictures/thumb/" : "pictures/";
-        this.textureIdentifier = Camerapture.id(prefix + id.toString());
+        this.textureIdentifier = Identifier.fromNamespaceAndPath("camerapture", prefix + id.toString());
     }
 
     public void touch() {

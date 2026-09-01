@@ -40,8 +40,16 @@ public class ClientPictureStore {
     private ClientPictureStore() {
     }
 
-    private TextureCache getCache(PictureQuality quality) {
+    TextureCache getCache(PictureQuality quality) {
         return (quality == PictureQuality.THUMBNAIL) ? thumbnailCache : fullCache;
+    }
+
+    boolean isInFlight(UUID id, PictureQuality quality) {
+        return inFlightNetworkRequests.contains(new PictureKey(id, quality));
+    }
+
+    RemotePicture getPictureDirect(UUID id) {
+        return pictures.get(id);
     }
 
     /// Resolve the effective rendering texture for a picture, requesting download if not yet loaded
@@ -96,7 +104,7 @@ public class ClientPictureStore {
     }
 
     /// Request a picture with a specific quality from disk or fallback to the server.
-    private void fetchPicture(UUID id, PictureQuality quality) {
+    void fetchPicture(UUID id, PictureQuality quality) {
         Camerapture.EXECUTOR.execute(() -> {
             Path diskPath = getCacheFilePath(id, quality);
             File file = diskPath.toFile();
@@ -154,7 +162,7 @@ public class ClientPictureStore {
     }
 
     /// Send a request to the server for a picture download.
-    private void requestFromServer(UUID id, PictureQuality quality) {
+    void requestFromServer(UUID id, PictureQuality quality) {
         PictureKey key = new PictureKey(id, quality);
         if (!inFlightNetworkRequests.add(key)) {
             return;
@@ -344,20 +352,31 @@ public class ClientPictureStore {
     private record QueuedBytes(UUID id, PictureQuality quality, byte[] bytes) {
     }
 
-    private record CacheEntry(PictureTexture texture, long accountedBytes) {
-    }
-
     /// An LRU cache managing GPU texture memory for a specific quality level.
-    private static class TextureCache {
+    public static class TextureCache {
         private final PictureQuality quality;
-        private final LinkedHashMap<UUID, CacheEntry> entries = new LinkedHashMap<>(256, 0.75f, true);
+        private final long customMaxBytes;
+        private final long customGraceMs;
+        private final Map<UUID, CacheEntry> entries = new LinkedHashMap<>(16, 0.75f, true);
         private long textureBytes = 0L;
 
-        private TextureCache(PictureQuality quality) {
+        public TextureCache(PictureQuality quality) {
+            this(quality, -1L, -1L);
+        }
+
+        public TextureCache(PictureQuality quality, long maxBytes, long graceMs) {
             this.quality = quality;
+            this.customMaxBytes = maxBytes;
+            this.customGraceMs = graceMs;
+        }
+
+        private record CacheEntry(PictureTexture texture, long accountedBytes) {
         }
 
         private long getMaxBytes() {
+            if (customMaxBytes > 0) {
+                return customMaxBytes;
+            }
             long budgetMiB = (quality == PictureQuality.THUMBNAIL)
                     ? Camerapture.CONFIG_MANAGER.getConfig().client.thumbnailTextureBudgetMiB
                     : Camerapture.CONFIG_MANAGER.getConfig().client.fullTextureBudgetMiB;
@@ -365,12 +384,19 @@ public class ClientPictureStore {
         }
 
         private long getInUseGraceMs() {
+            if (customGraceMs >= 0) {
+                return customGraceMs;
+            }
             // Thumbnails are small and useful across distant scenes, so they have a longer grace period.
             return (quality == PictureQuality.THUMBNAIL) ? 30_000L : 5_000L;
         }
 
         public synchronized long getTextureBytes() {
             return textureBytes;
+        }
+
+        public synchronized List<UUID> getOrderedKeys() {
+            return new ArrayList<>(entries.keySet());
         }
 
         public void touch(UUID id, PictureTexture texture) {
@@ -432,20 +458,30 @@ public class ClientPictureStore {
             CameraptureDebugStats.textureEvictions.incrementAndGet();
             texture.setStatus(PictureTexture.Status.NOT_LOADED);
 
-            Minecraft.getInstance().executeIfPossible(() -> {
-                synchronized (this) {
-                    if (entries.containsKey(id)) {
-                        return;
-                    }
+            try {
+                if (Minecraft.getInstance() != null && Minecraft.getInstance().getTextureManager() != null) {
+                    Minecraft.getInstance().executeIfPossible(() -> {
+                        synchronized (this) {
+                            if (entries.containsKey(id)) {
+                                return;
+                            }
+                        }
+                        Minecraft.getInstance().getTextureManager().release(texture.getTextureIdentifier());
+                    });
                 }
-                Minecraft.getInstance().getTextureManager().release(texture.getTextureIdentifier());
-            });
+            } catch (Throwable ignored) {
+            }
         }
 
         public synchronized void clear() {
             for (CacheEntry entry : entries.values()) {
                 entry.texture().setStatus(PictureTexture.Status.NOT_LOADED);
-                Minecraft.getInstance().getTextureManager().release(entry.texture().getTextureIdentifier());
+                try {
+                    if (Minecraft.getInstance() != null && Minecraft.getInstance().getTextureManager() != null) {
+                        Minecraft.getInstance().getTextureManager().release(entry.texture().getTextureIdentifier());
+                    }
+                } catch (Throwable ignored) {
+                }
             }
             entries.clear();
             textureBytes = 0L;

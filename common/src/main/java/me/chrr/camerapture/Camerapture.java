@@ -55,7 +55,6 @@ public class Camerapture {
     public static final Logger LOGGER = LogManager.getLogger("Camerapture");
 
     public static final Executor EXECUTOR = createIOExecutor();
-    public static final Executor IMAGE_EXECUTOR = createImageExecutor();
     public static final ConfigManager CONFIG_MANAGER = new ConfigManager();
 
     /// General & I/O executor for disk reads/writes, network serialization, and lightweight tasks.
@@ -78,101 +77,57 @@ public class Camerapture {
         return executor;
     }
 
-    /// Dedicated CPU-bound executor for WebP image compression and decompression.
-    /// Capped to 2-4 threads with a bounded work queue to prevent CPU starvation and GC spikes.
-    private static Executor createImageExecutor() {
-        int threads = Math.min(4, Math.max(2, Runtime.getRuntime().availableProcessors() / 4));
-
-        AtomicInteger counter = new AtomicInteger();
-        ThreadPoolExecutor executor = new ThreadPoolExecutor(
-                threads, threads,
-                60L, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(256),
-                runnable -> {
-                    Thread thread = new Thread(runnable, "camerapture-image-" + counter.incrementAndGet());
-                    thread.setDaemon(true);
-                    return thread;
-                },
-                new ThreadPoolExecutor.AbortPolicy()
-        );
-
-        executor.allowCoreThreadTimeOut(true);
-        return executor;
-    }
+    public static final ImageTaskExecutor IMAGE_TASK_EXECUTOR = new ImageTaskExecutor(
+            Math.min(4, Math.max(2, Runtime.getRuntime().availableProcessors() / 4)),
+            256,
+            "camerapture-image"
+    );
+    public static final Executor IMAGE_EXECUTOR = IMAGE_TASK_EXECUTOR.getExecutor();
 
     /// Safely submit a task to the image executor without running on the caller thread on saturation.
     public static boolean trySubmitImageTask(Runnable task) {
-        try {
-            IMAGE_EXECUTOR.execute(task);
-            return true;
-        } catch (java.util.concurrent.RejectedExecutionException e) {
-            return false;
-        }
+        return IMAGE_TASK_EXECUTOR.trySubmit(task);
     }
 
-    private static PlatformAdapter loadPlatformAdapter() {
-        try {
-            return Tapestry.implementation(id("platform_adapter"));
-        } catch (Throwable ignored) {
-            return null;
-        }
-    }
-
-    private static NetworkAdapter loadNetworkAdapter() {
-        try {
-            return Tapestry.implementation(id("network_adapter"));
-        } catch (Throwable ignored) {
-            return null;
-        }
-    }
-
-    public static final PlatformAdapter PLATFORM = loadPlatformAdapter();
-    public static final NetworkAdapter NETWORK = loadNetworkAdapter();
+    public static final PlatformAdapter PLATFORM = Tapestry.implementation(id("platform_adapter"));
+    public static final NetworkAdapter NETWORK = Tapestry.implementation(id("network_adapter"));
 
     // Server-bound packets have a way lower limit on size.
-    public static final int CLIENT_SECTION_SIZE = 30_000;
-    public static final int SERVER_SECTION_SIZE = 1_000_000;
-
-    private static <T> T safeInit(java.util.function.Supplier<T> supplier) {
-        try {
-            return supplier.get();
-        } catch (Throwable ignored) {
-            return null;
-        }
-    }
+    public static final int CLIENT_SECTION_SIZE = TransportLimits.CLIENT_SECTION_SIZE;
+    public static final int SERVER_SECTION_SIZE = TransportLimits.SERVER_SECTION_SIZE;
 
     // Camera
-    public static Item CAMERA = safeInit(CameraItem::new);
-    public static final SoundEvent CAMERA_SHUTTER = safeInit(() -> SoundEvent.createVariableRangeEvent(id("camera_shutter")));
+    public static Item CAMERA = new CameraItem();
+    public static final SoundEvent CAMERA_SHUTTER = SoundEvent.createVariableRangeEvent(id("camera_shutter"));
     public static final Identifier PICTURES_TAKEN = id("pictures_taken");
 
     // Picture
-    public static Item PICTURE = safeInit(PictureItem::new);
-    public static final RecipeSerializer<PictureCloningRecipe> PICTURE_CLONING = safeInit(() -> new RecipeSerializer<>(
-            MapCodec.unit(PictureCloningRecipe.INSTANCE), StreamCodec.unit(PictureCloningRecipe.INSTANCE)));
+    public static Item PICTURE = new PictureItem();
+    public static final RecipeSerializer<PictureCloningRecipe> PICTURE_CLONING = new RecipeSerializer<>(
+            MapCodec.unit(PictureCloningRecipe.INSTANCE), StreamCodec.unit(PictureCloningRecipe.INSTANCE));
 
     // Album
-    public static final Item ALBUM = safeInit(AlbumItem::new);
-    public static final MenuType<AlbumMenu> ALBUM_SCREEN_HANDLER = safeInit(() -> new MenuType<>(AlbumMenu::new, FeatureFlagSet.of()));
-    public static final MenuType<AlbumLecternMenu> ALBUM_LECTERN_SCREEN_HANDLER = safeInit(() ->
-            new MenuType<>((containerId, playerInventory) -> new AlbumLecternMenu(containerId), FeatureFlagSet.of()));
-    public static final RecipeSerializer<AlbumCloningRecipe> ALBUM_CLONING = safeInit(() -> new RecipeSerializer<>(
-            MapCodec.unit(AlbumCloningRecipe.INSTANCE), StreamCodec.unit(AlbumCloningRecipe.INSTANCE)));
+    public static final Item ALBUM = new AlbumItem();
+    public static final MenuType<AlbumMenu> ALBUM_SCREEN_HANDLER = new MenuType<>(AlbumMenu::new, FeatureFlagSet.of());
+    public static final MenuType<AlbumLecternMenu> ALBUM_LECTERN_SCREEN_HANDLER =
+            new MenuType<>((containerId, playerInventory) -> new AlbumLecternMenu(containerId), FeatureFlagSet.of());
+    public static final RecipeSerializer<AlbumCloningRecipe> ALBUM_CLONING = new RecipeSerializer<>(
+            MapCodec.unit(AlbumCloningRecipe.INSTANCE), StreamCodec.unit(AlbumCloningRecipe.INSTANCE));
 
     // Picture Frame Block
-    public static final Block PICTURE_FRAME_BLOCK = safeInit(PictureFrameBlock::new);
-    public static final BlockEntityType<PictureFrameBlockEntity> PICTURE_FRAME_BLOCK_ENTITY = safeInit(() ->
-            new BlockEntityType<>(PictureFrameBlockEntity::new, java.util.Set.of(PICTURE_FRAME_BLOCK)));
-    public static final MenuType<PictureFrameMenu> PICTURE_FRAME_SCREEN_HANDLER = safeInit(() ->
-            new MenuType<>((containerId, pi) -> new PictureFrameMenu(containerId), FeatureFlagSet.of()));
+    public static final Block PICTURE_FRAME_BLOCK = new PictureFrameBlock();
+    public static final BlockEntityType<PictureFrameBlockEntity> PICTURE_FRAME_BLOCK_ENTITY =
+            new BlockEntityType<>(PictureFrameBlockEntity::new, java.util.Set.of(PICTURE_FRAME_BLOCK));
+    public static final MenuType<PictureFrameMenu> PICTURE_FRAME_SCREEN_HANDLER =
+            new MenuType<>((containerId, pi) -> new PictureFrameMenu(containerId), FeatureFlagSet.of());
 
     // Data Components
-    public static final DataComponentType<PictureItem.PictureData> PICTURE_DATA = safeInit(() -> DataComponentType.<PictureItem.PictureData>builder()
+    public static final DataComponentType<PictureItem.PictureData> PICTURE_DATA = DataComponentType.<PictureItem.PictureData>builder()
             .persistent(PictureItem.PictureData.CODEC).networkSynchronized(PictureItem.PictureData.PACKET_CODEC)
-            .build());
-    public static final DataComponentType<Boolean> CAMERA_ACTIVE = safeInit(() -> DataComponentType.<Boolean>builder()
+            .build();
+    public static final DataComponentType<Boolean> CAMERA_ACTIVE = DataComponentType.<Boolean>builder()
             .persistent(Codec.BOOL).networkSynchronized(ByteBufCodecs.BOOL)
-            .build());
+            .build();
 
     public static void registerPacketHandlers() {
         // Client requests to take / upload a picture
@@ -274,46 +229,34 @@ public class Camerapture {
 
         // Client requests a picture with a certain UUID and quality
         NETWORK.onReceiveFromClient(RequestDownloadPacket.class, (packet, player) -> {
-            // Packet handlers run on the server thread on both loaders, and a cache miss here reads the
-            // picture off the disk. Do that on the executor instead, like uploads already do.
-            EXECUTOR.execute(() -> {
-                try {
-                    StoredPicture picture = ServerPictureStore.getInstance().get(player.server, packet.uuid(), packet.quality());
-
-                    if (picture != null) {
-                        DownloadQueue.getInstance().send(player, packet.uuid(), packet.quality(), picture);
-                        return;
-                    }
-
-                    // If thumbnail requested but missing, check if original exists and generate lazily on IMAGE_EXECUTOR
-                    if (packet.quality() == me.chrr.camerapture.picture.PictureQuality.THUMBNAIL) {
-                        StoredPicture fullPicture = ServerPictureStore.getInstance().get(player.server, packet.uuid(), me.chrr.camerapture.picture.PictureQuality.FULL);
-                        if (fullPicture != null) {
-                            boolean submitted = trySubmitImageTask(() -> {
-                                try {
-                                    int thumbRes = CONFIG_MANAGER.getConfig().server.thumbnailResolution;
-                                    byte[] thumbBytes = me.chrr.camerapture.util.ImageUtil.createThumbnail(fullPicture.bytes(), thumbRes);
-                                    StoredPicture thumbPicture = new StoredPicture(thumbBytes);
-                                    ServerPictureStore.getInstance().saveThumbnail(player.server, packet.uuid(), thumbPicture);
-                                    DownloadQueue.getInstance().send(player, packet.uuid(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL, thumbPicture);
-                                } catch (Exception e) {
-                                    LOGGER.error("failed to generate lazy thumbnail for {} ({})", packet.uuid(), packet.quality(), e);
-                                    NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));
-                                }
-                            });
-                            if (submitted) {
-                                return;
+            if (packet.quality() == me.chrr.camerapture.picture.PictureQuality.THUMBNAIL) {
+                ServerPictureStore.getInstance().getOrGenerateThumbnailAsync(player.server, packet.uuid())
+                        .thenAccept(picture -> {
+                            if (picture != null) {
+                                DownloadQueue.getInstance().send(player, packet.uuid(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL, picture);
+                            } else {
+                                LOGGER.warn("{} requested a thumbnail with an unknown UUID: {}", player.getName().getString(), packet.uuid());
+                                NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL));
                             }
-                        }
-                    }
+                        });
+            } else {
+                EXECUTOR.execute(() -> {
+                    try {
+                        StoredPicture picture = ServerPictureStore.getInstance().get(player.server, packet.uuid(), packet.quality());
 
-                    LOGGER.warn("{} requested a picture with an unknown UUID: {} ({})", player.getName().getString(), packet.uuid(), packet.quality());
-                    NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));
-                } catch (Exception e) {
-                    LOGGER.error("failed to load picture for {} ({}): {}", player.getName().getString(), packet.uuid(), packet.quality(), e);
-                    NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));
-                }
-            });
+                        if (picture != null) {
+                            DownloadQueue.getInstance().send(player, packet.uuid(), packet.quality(), picture);
+                            return;
+                        }
+
+                        LOGGER.warn("{} requested a picture with an unknown UUID: {} ({})", player.getName().getString(), packet.uuid(), packet.quality());
+                        NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));
+                    } catch (Exception e) {
+                        LOGGER.error("failed to load picture for {} ({}): {}", player.getName().getString(), packet.uuid(), packet.quality(), e);
+                        NETWORK.sendToClient(player, new PictureErrorPacket(packet.uuid(), packet.quality()));
+                    }
+                });
+            }
         });
     }
 

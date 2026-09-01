@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /// The server-side picture store. It manages picture storage, thumbnail generation,
@@ -87,6 +88,8 @@ public class ServerPictureStore {
         return new PreparedPicture(id, bytes, thumbBytes);
     }
 
+    private final ConcurrentHashMap<UUID, CompletableFuture<StoredPicture>> thumbnailGenerations = new ConcurrentHashMap<>();
+
     /// Persists prepared full picture and thumbnail to disk and memory cache (I/O thread).
     public void save(MinecraftServer server, PreparedPicture prepared) throws IOException {
         StoredPicture fullPicture = new StoredPicture(prepared.fullBytes());
@@ -120,6 +123,74 @@ public class ServerPictureStore {
             } catch (Exception e) {
                 Camerapture.LOGGER.error("failed to save lazy thumbnail for {}", id, e);
             }
+        });
+    }
+
+    /// Fetches a thumbnail or lazily generates and persists one if missing, collapsing concurrent
+    /// requests for the same picture into a single I/O read + single WebP generation task.
+    public CompletableFuture<StoredPicture> getOrGenerateThumbnailAsync(MinecraftServer server, UUID id) {
+        PictureKey key = new PictureKey(id, PictureQuality.THUMBNAIL);
+        StoredPicture cached = getCached(key);
+        if (cached != null) {
+            return CompletableFuture.completedFuture(cached);
+        }
+
+        return thumbnailGenerations.computeIfAbsent(id, pictureId -> {
+            CompletableFuture<StoredPicture> future = new CompletableFuture<>();
+            Camerapture.EXECUTOR.execute(() -> {
+                try {
+                    // Check if already in cache
+                    StoredPicture memoryCached = getCached(key);
+                    if (memoryCached != null) {
+                        future.complete(memoryCached);
+                        return;
+                    }
+
+                    // Check if thumbnail exists on disk
+                    Path thumbPath = getFilePath(server, pictureId, PictureQuality.THUMBNAIL);
+                    if (Files.exists(thumbPath)) {
+                        StoredPicture thumb = new StoredPicture(Files.readAllBytes(thumbPath));
+                        cache(key, thumb);
+                        future.complete(thumb);
+                        return;
+                    }
+
+                    // Fallback to generating from full image (migration)
+                    Path fullPath = getFilePath(server, pictureId, PictureQuality.FULL);
+                    if (!Files.exists(fullPath)) {
+                        future.complete(null);
+                        return;
+                    }
+
+                    byte[] fullBytes = Files.readAllBytes(fullPath);
+
+                    boolean submitted = Camerapture.trySubmitImageTask(() -> {
+                        try {
+                            int thumbRes = Camerapture.CONFIG_MANAGER.getConfig().server.thumbnailResolution;
+                            byte[] thumbBytes = ImageUtil.createThumbnail(fullBytes, thumbRes);
+                            StoredPicture thumbPicture = new StoredPicture(thumbBytes);
+
+                            cache(key, thumbPicture);
+                            saveThumbnail(server, pictureId, thumbPicture);
+                            future.complete(thumbPicture);
+                        } catch (Throwable t) {
+                            Camerapture.LOGGER.error("failed to generate lazy thumbnail for picture {}", pictureId, t);
+                            future.complete(null);
+                        }
+                    });
+
+                    if (!submitted) {
+                        Camerapture.LOGGER.warn("Image worker saturated, could not generate lazy thumbnail for {}", pictureId);
+                        future.complete(null);
+                    }
+                } catch (Throwable t) {
+                    Camerapture.LOGGER.error("failed to read picture for lazy thumbnail generation {}", pictureId, t);
+                    future.complete(null);
+                }
+            });
+
+            future.whenComplete((res, err) -> thumbnailGenerations.remove(pictureId, future));
+            return future;
         });
     }
 
