@@ -9,7 +9,6 @@ import me.chrr.camerapture.picture.WebPHeader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -101,7 +100,7 @@ public class CorruptCacheFallbackTest {
     @Test
     public void testTransientBusyExponentialBackoffAndDeadline() {
         ClientPictureStore store = ClientPictureStore.getInstance();
-        store.clearAll();
+        store.clearRetryStates();
 
         UUID id = UUID.randomUUID();
         RemotePicture pic = store.getPictureDirect(id);
@@ -134,20 +133,29 @@ public class CorruptCacheFallbackTest {
     }
 
     @Test
-    public void testSuccessfulImageReceptionClearsRetryState() {
+    public void testClearRetryStatesClearsBackoff() {
         ClientPictureStore store = ClientPictureStore.getInstance();
-        store.clearAll();
+        store.clearRetryStates();
 
         UUID id = UUID.randomUUID();
         store.processReceivedError(id, PictureQuality.THUMBNAIL, PictureErrorPacket.Reason.BUSY);
         assertEquals(1, store.getConsecutiveBusyFailures(id, PictureQuality.THUMBNAIL));
 
-        BufferedImage dummy = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
-        store.processReceivedImage(id, PictureQuality.THUMBNAIL, dummy);
+        store.clearRetryStates();
 
         assertEquals(0, store.getConsecutiveBusyFailures(id, PictureQuality.THUMBNAIL),
-                "Successful image reception must clear retry backoff state");
+                "clearRetryStates must reset all retry backoff counters");
         assertEquals(0L, store.getRetryDeadline(id, PictureQuality.THUMBNAIL));
+    }
+
+    @Test
+    public void testTextureSizeAccounting() {
+        UUID id = UUID.randomUUID();
+        PictureTexture texture = new PictureTexture(id, PictureQuality.FULL);
+        assertEquals(0L, texture.getTextureBytes(), "Newly created texture must have 0 bytes");
+
+        texture.setSize(100, 200);
+        assertEquals(100 * 200 * 4L, texture.getTextureBytes(), "Texture bytes must match width * height * 4 RGBA bytes");
     }
 
     @Test

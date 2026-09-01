@@ -212,36 +212,27 @@ public class ClientPictureStore {
     /// Update the stored texture with the given BufferedImage and upload to GPU.
     /// Byte accounting is handled strictly by TextureCache#put when the texture is uploaded.
     public void processReceivedImage(UUID id, PictureQuality quality, BufferedImage image) {
-        retryStates.remove(new PictureKey(id, quality));
         RemotePicture picture = pictures.computeIfAbsent(id, RemotePicture::new);
         PictureTexture texture = picture.getTexture(quality);
 
-        try {
-            if (Minecraft.getInstance() != null) {
-                @SuppressWarnings("resource") NativeImage nativeImage = NativeImageUtil.toNativeImage(image);
-                Minecraft.getInstance().executeIfPossible(() -> {
-                    DynamicTexture dynamicTexture = new DynamicTexture(
-                            () -> "camerapture/" + quality.getSerializedName() + "/" + id,
-                            nativeImage
-                    );
-                    if (Minecraft.getInstance().getTextureManager() != null) {
-                        Minecraft.getInstance()
-                                .getTextureManager()
-                                .register(texture.getTextureIdentifier(), dynamicTexture);
-                    }
+        texture.setSize(image.getWidth(), image.getHeight());
 
-                    texture.setStatus(PictureTexture.Status.SUCCESS);
-                    getCache(quality).put(id, texture);
-                    CameraptureDebugStats.textureUploads.incrementAndGet();
-                });
-                return;
-            }
-        } catch (Throwable ignored) {
-        }
+        @SuppressWarnings("resource") NativeImage nativeImage = NativeImageUtil.toNativeImage(image);
 
-        texture.setStatus(PictureTexture.Status.SUCCESS);
-        getCache(quality).put(id, texture);
-        CameraptureDebugStats.textureUploads.incrementAndGet();
+        Minecraft.getInstance().executeIfPossible(() -> {
+            DynamicTexture dynamicTexture = new DynamicTexture(
+                    () -> "camerapture/" + quality.getSerializedName() + "/" + id,
+                    nativeImage
+            );
+            Minecraft.getInstance()
+                    .getTextureManager()
+                    .register(texture.getTextureIdentifier(), dynamicTexture);
+
+            texture.setStatus(PictureTexture.Status.SUCCESS);
+            getCache(quality).put(id, texture);
+            retryStates.remove(new PictureKey(id, quality));
+            CameraptureDebugStats.textureUploads.incrementAndGet();
+        });
     }
 
     /// Process bytes received from the server directly via IMAGE_EXECUTOR without client-tick delay.
@@ -289,7 +280,7 @@ public class ClientPictureStore {
             int failures = (prevState != null) ? prevState.consecutiveFailures() + 1 : 1;
             long baseDelay = Math.min(MAX_RETRY_BACKOFF_MS, INITIAL_RETRY_BACKOFF_MS * (1L << Math.min(failures - 1, 10)));
             long jitter = (long) (Math.random() * (baseDelay * 0.25));
-            long delay = baseDelay + jitter;
+            long delay = Math.min(MAX_RETRY_BACKOFF_MS, baseDelay + jitter);
             long deadline = System.currentTimeMillis() + delay;
             retryStates.put(key, new RetryState(failures, deadline));
 
@@ -328,11 +319,10 @@ public class ClientPictureStore {
         }
     }
 
-    public void clearAll() {
-        fullCache.clear();
-        thumbnailCache.clear();
+    public void clearRetryStates() {
         retryStates.clear();
         inFlightNetworkRequests.clear();
+        pictures.clear();
     }
 
     /// Decode full WebP bytes with header safety checks.
@@ -375,6 +365,8 @@ public class ClientPictureStore {
 
     /// Clear all pictures from the store and destroy all textures.
     public void clear() {
+        retryStates.clear();
+        byteQueue.clear();
         Minecraft.getInstance().executeIfPossible(() -> {
             fullCache.clear();
             thumbnailCache.clear();
@@ -445,14 +437,10 @@ public class ClientPictureStore {
             if (customMaxBytes > 0) {
                 return customMaxBytes;
             }
-            try {
-                long budgetMiB = (quality == PictureQuality.THUMBNAIL)
-                        ? Camerapture.CONFIG_MANAGER.getConfig().client.thumbnailTextureBudgetMiB
-                        : Camerapture.CONFIG_MANAGER.getConfig().client.fullTextureBudgetMiB;
-                return Math.max(8L, budgetMiB) * 1024L * 1024L;
-            } catch (Throwable ignored) {
-                return (quality == PictureQuality.THUMBNAIL) ? 32L * 1024L * 1024L : 128L * 1024L * 1024L;
-            }
+            long budgetMiB = (quality == PictureQuality.THUMBNAIL)
+                    ? Camerapture.CONFIG_MANAGER.getConfig().client.thumbnailTextureBudgetMiB
+                    : Camerapture.CONFIG_MANAGER.getConfig().client.fullTextureBudgetMiB;
+            return Math.max(8L, budgetMiB) * 1024L * 1024L;
         }
 
         private long getInUseGraceMs() {
