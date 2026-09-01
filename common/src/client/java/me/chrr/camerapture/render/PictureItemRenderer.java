@@ -25,8 +25,8 @@ public class PictureItemRenderer implements SpecialModelRenderer<UUID> {
             return false;
         }
 
-        RemotePicture picture = ClientPictureStore.getInstance().getPicture(pictureData.id(), me.chrr.camerapture.picture.PictureQuality.FULL);
-        return picture.getFull().getStatus() == me.chrr.camerapture.picture.PictureTexture.Status.SUCCESS;
+        me.chrr.camerapture.picture.ResolvedPicture resolved = ClientPictureStore.getInstance().resolveForRender(pictureData.id(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL);
+        return resolved.status() == me.chrr.camerapture.picture.PictureTexture.Status.SUCCESS;
     }
 
     @Override
@@ -35,8 +35,8 @@ public class PictureItemRenderer implements SpecialModelRenderer<UUID> {
             return;
         }
 
-        RemotePicture picture = ClientPictureStore.getInstance().getPicture(data, me.chrr.camerapture.picture.PictureQuality.FULL);
-        me.chrr.camerapture.picture.PictureTexture texture = picture.getEffectiveTexture(me.chrr.camerapture.picture.PictureQuality.FULL);
+        me.chrr.camerapture.picture.ResolvedPicture resolved = ClientPictureStore.getInstance().resolveForRender(data, me.chrr.camerapture.picture.PictureQuality.THUMBNAIL);
+        me.chrr.camerapture.picture.PictureTexture texture = resolved.texture();
         if (texture.getStatus() != me.chrr.camerapture.picture.PictureTexture.Status.SUCCESS) {
             return;
         }

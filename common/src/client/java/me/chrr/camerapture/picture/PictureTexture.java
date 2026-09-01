@@ -27,6 +27,10 @@ public class PictureTexture {
         this.lastAccess = System.currentTimeMillis();
     }
 
+    public void touch(long now) {
+        this.lastAccess = now;
+    }
+
     public long getLastAccess() {
         return lastAccess;
     }

@@ -33,4 +33,52 @@ public final class RenderMetrics {
 
         return cachedFocalLengthPixels;
     }
+
+    private static FrameContext currentFrameContext = null;
+    private static long lastContextFrameTime = -1L;
+
+    public static FrameContext getFrameContext() {
+        long now = System.currentTimeMillis();
+        if (currentFrameContext == null || now - lastContextFrameTime > 16L) {
+            currentFrameContext = new FrameContext(Minecraft.getInstance());
+            lastContextFrameTime = now;
+        }
+        return currentFrameContext;
+    }
+
+    public static class FrameContext {
+        public final double focalLengthPixels;
+        public final float minPixels;
+        public final float fullThreshold;
+        public final boolean renderBacking;
+        public final boolean cameraActive;
+        public final boolean hudHidden;
+        public final net.minecraft.core.BlockPos targetedBlockPos;
+
+        // Precalculated squared ratio factors: (focal / threshold)^2
+        public final double skipDistFactorSq;
+        public final double minHighDistFactorSq;
+        public final double fullLowDistFactorSq;
+        public final double fullHighDistFactorSq;
+
+        public FrameContext(Minecraft client) {
+            this.focalLengthPixels = getFocalLengthPixels();
+            this.minPixels = Math.max(0.5f, me.chrr.camerapture.Camerapture.CONFIG_MANAGER.getConfig().client.minimumRenderPixels);
+            this.fullThreshold = Math.max(minPixels + 1.0f, me.chrr.camerapture.Camerapture.CONFIG_MANAGER.getConfig().client.fullLodPixels);
+            this.renderBacking = me.chrr.camerapture.Camerapture.CONFIG_MANAGER.getConfig().client.renderPictureFrameBacking;
+            this.cameraActive = client.player != null && me.chrr.camerapture.item.CameraItem.find(client.player, true) != null;
+            this.hudHidden = client.gui.hud.isHidden();
+            this.targetedBlockPos = (client.hitResult instanceof net.minecraft.world.phys.BlockHitResult bhr) ? bhr.getBlockPos() : null;
+
+            double skipDiv = minPixels * 0.75;
+            double minHighDiv = minPixels * 1.25;
+            double fullLowDiv = fullThreshold * 0.85;
+            double fullHighDiv = fullThreshold * 1.15;
+
+            this.skipDistFactorSq = (focalLengthPixels / skipDiv) * (focalLengthPixels / skipDiv);
+            this.minHighDistFactorSq = (focalLengthPixels / minHighDiv) * (focalLengthPixels / minHighDiv);
+            this.fullLowDistFactorSq = (focalLengthPixels / fullLowDiv) * (focalLengthPixels / fullLowDiv);
+            this.fullHighDistFactorSq = (focalLengthPixels / fullHighDiv) * (focalLengthPixels / fullHighDiv);
+        }
+    }
 }

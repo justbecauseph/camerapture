@@ -97,9 +97,9 @@ public class AlbumScreen extends AbstractContainerScreen<AlbumMenu> {
         if (pictureSlot.hasItem()) {
             PictureItem.PictureData pictureData = PictureItem.getPictureData(slot.getItem());
             if (pictureData != null) {
-                RemotePicture picture = ClientPictureStore.getInstance().ensureRemotePicture(pictureData.id());
+                RemotePicture picture = ClientPictureStore.getInstance().getPicture(pictureData.id(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL);
                 PictureDrawingUtil.drawPicture(graphics, font, picture,
-                        slot.x, slot.y, pictureSlot.getWidth(), pictureSlot.getHeight());
+                        slot.x, slot.y, pictureSlot.getWidth(), pictureSlot.getHeight(), me.chrr.camerapture.picture.PictureQuality.THUMBNAIL);
             }
         } else {
             graphics.blit(RenderPipelines.GUI_TEXTURED, TEXTURE, slot.x - 1, slot.y - 1, 280, 0, pictureSlot.getWidth() + 2, pictureSlot.getHeight() + 2, 512, 512);

@@ -44,19 +44,29 @@ public class ClientPictureStore {
         return (quality == PictureQuality.THUMBNAIL) ? thumbnailCache : fullCache;
     }
 
-    /// Retrieve or create a RemotePicture entry and request the specified quality if not yet loaded.
-    public RemotePicture getPicture(@NotNull UUID id, @NotNull PictureQuality quality) {
+    /// Resolve a RemotePicture and its effective rendering texture, requesting download if not yet loaded
+    /// and touching the active texture in LRU cache with epoch/time throttling.
+    public ResolvedPicture resolveForRender(@NotNull UUID id, @NotNull PictureQuality preferred) {
         RemotePicture picture = pictures.computeIfAbsent(id, RemotePicture::new);
-        PictureTexture texture = picture.getTexture(quality);
+        PictureTexture preferredTexture = picture.getTexture(preferred);
 
-        if (texture.getStatus() == PictureTexture.Status.SUCCESS) {
-            getCache(quality).touch(id, texture);
-        } else if (texture.getStatus() == PictureTexture.Status.NOT_LOADED) {
-            texture.setStatus(PictureTexture.Status.FETCHING);
-            fetchPicture(id, quality);
+        if (preferredTexture.getStatus() == PictureTexture.Status.NOT_LOADED) {
+            preferredTexture.setStatus(PictureTexture.Status.FETCHING);
+            fetchPicture(id, preferred);
         }
 
-        return picture;
+        PictureTexture effective = picture.getEffectiveTexture(preferred);
+        if (effective.getStatus() == PictureTexture.Status.SUCCESS) {
+            long now = System.currentTimeMillis();
+            getCache(effective.getQuality()).touch(id, effective, now);
+        }
+
+        return new ResolvedPicture(picture, effective);
+    }
+
+    /// Retrieve or create a RemotePicture entry and request the specified quality if not yet loaded.
+    public RemotePicture getPicture(@NotNull UUID id, @NotNull PictureQuality quality) {
+        return resolveForRender(id, quality).picture();
     }
 
     /// Legacy compatibility helper: requests full quality picture.
@@ -86,10 +96,16 @@ public class ClientPictureStore {
             if (file.exists()) {
                 try {
                     byte[] bytes = Files.readAllBytes(file.toPath());
-                    BufferedImage image = (quality == PictureQuality.FULL)
-                            ? decodeFullChecked(id, bytes)
-                            : decodeThumbnailChecked(id, bytes);
-                    processReceivedImage(id, quality, image);
+                    Camerapture.IMAGE_EXECUTOR.execute(() -> {
+                        try {
+                            BufferedImage image = (quality == PictureQuality.FULL)
+                                    ? decodeFullChecked(id, bytes)
+                                    : decodeThumbnailChecked(id, bytes);
+                            processReceivedImage(id, quality, image);
+                        } catch (Exception e) {
+                            Camerapture.LOGGER.error("could not decode cached picture {} ({})", id, quality, e);
+                        }
+                    });
                     return;
                 } catch (Exception e) {
                     Camerapture.LOGGER.error("could not read cached picture {} ({})", id, quality, e);
@@ -140,31 +156,30 @@ public class ClientPictureStore {
         });
     }
 
-    /// Process bytes received from the server by adding them to the queue.
+    /// Process bytes received from the server directly via IMAGE_EXECUTOR without client-tick delay.
     public void processReceivedBytes(UUID id, PictureQuality quality, byte[] bytes) {
-        byteQueue.add(new QueuedBytes(id, quality, bytes));
+        Camerapture.IMAGE_EXECUTOR.execute(() -> {
+            PictureKey key = new PictureKey(id, quality);
+            try {
+                BufferedImage image = (quality == PictureQuality.FULL)
+                        ? decodeFullChecked(id, bytes)
+                        : decodeThumbnailChecked(id, bytes);
+                processReceivedImage(id, quality, image);
+                Camerapture.EXECUTOR.execute(() -> cacheBytesToDisk(id, quality, bytes));
+            } catch (Exception e) {
+                Camerapture.LOGGER.error("failed to decode received image bytes for image {} ({})", id, quality, e);
+                processReceivedError(id, quality);
+            } finally {
+                inFlightNetworkRequests.remove(key);
+            }
+        });
     }
 
-    /// Processes all images from the queue.
+    /// Processes all images from the queue (retained for backwards compatibility).
     public void processQueue() {
         QueuedBytes item;
         while ((item = byteQueue.poll()) != null) {
-            final QueuedBytes queuedItem = item;
-            Camerapture.EXECUTOR.execute(() -> {
-                PictureKey key = new PictureKey(queuedItem.id, queuedItem.quality);
-                try {
-                    BufferedImage image = (queuedItem.quality == PictureQuality.FULL)
-                            ? decodeFullChecked(queuedItem.id, queuedItem.bytes)
-                            : decodeThumbnailChecked(queuedItem.id, queuedItem.bytes);
-                    processReceivedImage(queuedItem.id, queuedItem.quality, image);
-                    cacheBytesToDisk(queuedItem.id, queuedItem.quality, queuedItem.bytes);
-                } catch (Exception e) {
-                    Camerapture.LOGGER.error("failed to decode received image bytes for image {} ({})", queuedItem.id, queuedItem.quality, e);
-                    processReceivedError(queuedItem.id, queuedItem.quality);
-                } finally {
-                    inFlightNetworkRequests.remove(key);
-                }
-            });
+            processReceivedBytes(item.id(), item.quality(), item.bytes());
         }
     }
 
@@ -307,9 +322,19 @@ public class ClientPictureStore {
             return textureBytes;
         }
 
-        public synchronized void touch(UUID id, PictureTexture texture) {
-            texture.touch();
-            entries.get(id); // Access in LinkedHashMap moves to MRU end
+        public void touch(UUID id, PictureTexture texture) {
+            touch(id, texture, System.currentTimeMillis());
+        }
+
+        public void touch(UUID id, PictureTexture texture, long now) {
+            // Throttle touches to 500ms to eliminate synchronized Map lock contention on rendered frames
+            if (now - texture.getLastAccess() < 500L) {
+                return;
+            }
+            synchronized (this) {
+                texture.touch(now);
+                entries.get(id); // Access in LinkedHashMap moves to MRU end
+            }
         }
 
         public void put(UUID id, PictureTexture texture) {

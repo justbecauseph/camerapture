@@ -51,13 +51,15 @@ public class PictureFrameBlockEntityRenderer implements BlockEntityRenderer<Pict
 
         CameraptureDebugStats.extractedFrames.incrementAndGet();
 
+        RenderMetrics.FrameContext ctx = RenderMetrics.getFrameContext();
+
         state.renderBox = blockEntity.getRenderBox();
         state.facing = blockEntity.getFacing();
         state.frameWidth = blockEntity.getFrameWidth();
         state.frameHeight = blockEntity.getFrameHeight();
         state.isPictureGlowing = blockEntity.isPictureGlowing();
         state.rotation = blockEntity.getRotation();
-        state.renderBacking = Camerapture.CONFIG_MANAGER.getConfig().client.renderPictureFrameBacking;
+        state.renderBacking = ctx.renderBacking;
 
         state.pictureId = null;
         ItemStack stack = blockEntity.getItemStack();
@@ -68,44 +70,43 @@ public class PictureFrameBlockEntityRenderer implements BlockEntityRenderer<Pict
             }
         }
 
-        Minecraft client = Minecraft.getInstance();
-        state.shouldRenderOutline = !client.gui.hud.isHidden()
-                && CameraItem.find(client.player, true) == null
-                && client.hitResult instanceof BlockHitResult blockHit
-                && blockHit.getBlockPos().equals(blockEntity.getBlockPos());
+        state.shouldRenderOutline = !ctx.hudHidden
+                && !ctx.cameraActive
+                && ctx.targetedBlockPos != null
+                && ctx.targetedBlockPos.equals(blockEntity.getBlockPos());
 
-        // Screen-space Projected Size & LOD Classification with Hysteresis during extraction
+        // Screen-space Projected Size & LOD Classification using Squared Distances (Arithmetic only, No Math.sqrt)
         double distSq = state.renderBox.distanceToSqr(cameraPos);
-        double distance = Math.max(0.1, Math.sqrt(distSq));
-        double focalLengthPixels = RenderMetrics.getFocalLengthPixels();
         float worldSize = Math.max(state.frameWidth, state.frameHeight);
-        float projectedPixels = (float) (worldSize / distance * focalLengthPixels);
+        double worldSizeSq = worldSize * worldSize;
 
-        float minPixels = Math.max(0.5f, Camerapture.CONFIG_MANAGER.getConfig().client.minimumRenderPixels);
-        float fullThreshold = Math.max(minPixels + 1.0f, Camerapture.CONFIG_MANAGER.getConfig().client.fullLodPixels);
+        double distSqSkip = worldSizeSq * ctx.skipDistFactorSq;
+        double distSqFullLow = worldSizeSq * ctx.fullLowDistFactorSq;
+        double distSqFullHigh = worldSizeSq * ctx.fullHighDistFactorSq;
+        double distSqMinHigh = worldSizeSq * ctx.minHighDistFactorSq;
 
         PictureLod lod;
         PictureLod prev = blockEntity.lastLod;
         if (prev == PictureLod.FULL) {
-            if (projectedPixels < minPixels * 0.75f) {
+            if (distSq > distSqSkip) {
                 lod = PictureLod.SKIP;
-            } else if (projectedPixels < fullThreshold * 0.85f) {
+            } else if (distSq > distSqFullLow) {
                 lod = PictureLod.THUMBNAIL;
             } else {
                 lod = PictureLod.FULL;
             }
         } else if (prev == PictureLod.THUMBNAIL) {
-            if (projectedPixels < minPixels * 0.75f) {
+            if (distSq > distSqSkip) {
                 lod = PictureLod.SKIP;
-            } else if (projectedPixels >= fullThreshold * 1.15f) {
+            } else if (distSq <= distSqFullHigh) {
                 lod = PictureLod.FULL;
             } else {
                 lod = PictureLod.THUMBNAIL;
             }
         } else {
-            if (projectedPixels >= fullThreshold * 1.15f) {
+            if (distSq <= distSqFullHigh) {
                 lod = PictureLod.FULL;
-            } else if (projectedPixels >= minPixels * 1.25f) {
+            } else if (distSq <= distSqMinHigh) {
                 lod = PictureLod.THUMBNAIL;
             } else {
                 lod = PictureLod.SKIP;
@@ -166,8 +167,8 @@ public class PictureFrameBlockEntityRenderer implements BlockEntityRenderer<Pict
             }
         } else {
             PictureQuality targetQuality = (state.lod == PictureLod.FULL) ? PictureQuality.FULL : PictureQuality.THUMBNAIL;
-            RemotePicture picture = ClientPictureStore.getInstance().getPicture(state.pictureId, targetQuality);
-            PictureTexture texture = (picture != null) ? picture.getEffectiveTexture(targetQuality) : null;
+            me.chrr.camerapture.picture.ResolvedPicture resolved = ClientPictureStore.getInstance().resolveForRender(state.pictureId, targetQuality);
+            PictureTexture texture = (resolved != null) ? resolved.texture() : null;
 
             if (state.lod == PictureLod.THUMBNAIL) {
                 if (texture != null && texture.getStatus() == PictureTexture.Status.SUCCESS) {
@@ -254,10 +255,16 @@ public class PictureFrameBlockEntityRenderer implements BlockEntityRenderer<Pict
 
     @Override
     public boolean shouldRender(PictureFrameBlockEntity blockEntity, Vec3 cameraPos) {
+        double distSq = blockEntity.getRenderBox().distanceToSqr(cameraPos);
         if (!Camerapture.CONFIG_MANAGER.getConfig().client.distantPictureRendering) {
-            return blockEntity.getRenderBox().distanceToSqr(cameraPos) <= 96.0 * 96.0;
+            return distSq <= 96.0 * 96.0;
         }
-        return true;
+
+        // Early culling before extraction: if projected pixel size is below skip threshold, skip extraction
+        RenderMetrics.FrameContext ctx = RenderMetrics.getFrameContext();
+        float worldSize = Math.max(blockEntity.getFrameWidth(), blockEntity.getFrameHeight());
+        double maxDistSq = (worldSize * worldSize) * ctx.skipDistFactorSq;
+        return distSq <= maxDistSq;
     }
 
     @Override

@@ -48,7 +48,7 @@ public class CameraptureClient {
     public static void registerPacketHandlers() {
         // Server requests client to send over a picture, most likely from the camera
         Camerapture.NETWORK.onReceiveFromServer(RequestUploadPacket.class, (packet) ->
-                Camerapture.EXECUTOR.execute(() -> PictureTaker.getInstance().uploadStoredPicture(packet.uuid())));
+                Camerapture.IMAGE_EXECUTOR.execute(() -> PictureTaker.getInstance().uploadStoredPicture(packet.uuid())));
 
         // Server sends back a picture following a picture request by UUID and quality
         Map<me.chrr.camerapture.picture.PictureKey, ByteCollector> collectors = new ConcurrentHashMap<>();
@@ -59,7 +59,7 @@ public class CameraptureClient {
             synchronized (collectors) {
                 collector = collectors.computeIfAbsent(key, (k) -> new ByteCollector((bytes) -> {
                     collectors.remove(key);
-                    Camerapture.EXECUTOR.execute(() -> ClientPictureStore.getInstance().processReceivedBytes(packet.uuid(), packet.quality(), bytes));
+                    ClientPictureStore.getInstance().processReceivedBytes(packet.uuid(), packet.quality(), bytes);
                 }));
             }
 

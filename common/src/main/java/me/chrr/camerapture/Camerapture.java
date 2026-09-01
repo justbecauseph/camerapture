@@ -54,21 +54,13 @@ public class Camerapture {
     public static final String MOD_ID = "camerapture";
     public static final Logger LOGGER = LogManager.getLogger("Camerapture");
 
-    public static final Executor EXECUTOR = createExecutor();
+    public static final Executor EXECUTOR = createIOExecutor();
+    public static final Executor IMAGE_EXECUTOR = createImageExecutor();
     public static final ConfigManager CONFIG_MANAGER = new ConfigManager();
 
-    /// Picture work — disk reads and writes, WebP decoding — runs here, off the game thread.
-    ///
-    /// Deliberately a fixed pool rather than a cached one: download requests come straight from clients,
-    /// so with a few hundred players a cached pool would spawn a thread per in-flight request and could
-    /// run the server out of them. A bounded pool turns a request flood into a queue instead. The queue
-    /// itself stays unbounded because each task is only a UUID and a player reference, and duplicate
-    /// requests already collapse in ServerPictureStore and DownloadQueue.
-    ///
-    /// Threads are daemons that time out when idle, so the pool can never hold up JVM shutdown, and
-    /// they're named so they're identifiable in a profiler or thread dump.
-    private static Executor createExecutor() {
-        int threads = Math.max(4, Runtime.getRuntime().availableProcessors());
+    /// General & I/O executor for disk reads/writes, network serialization, and lightweight tasks.
+    private static Executor createIOExecutor() {
+        int threads = Math.min(4, Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
 
         AtomicInteger counter = new AtomicInteger();
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
@@ -76,10 +68,32 @@ public class Camerapture {
                 60L, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<>(),
                 runnable -> {
-                    Thread thread = new Thread(runnable, "camerapture-worker-" + counter.incrementAndGet());
+                    Thread thread = new Thread(runnable, "camerapture-io-" + counter.incrementAndGet());
                     thread.setDaemon(true);
                     return thread;
                 }
+        );
+
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
+    /// Dedicated CPU-bound executor for WebP image compression and decompression.
+    /// Capped to 2-4 threads with a bounded work queue to prevent CPU starvation and GC spikes.
+    private static Executor createImageExecutor() {
+        int threads = Math.min(4, Math.max(2, Runtime.getRuntime().availableProcessors() / 4));
+
+        AtomicInteger counter = new AtomicInteger();
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                threads, threads,
+                60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(256),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "camerapture-image-" + counter.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy()
         );
 
         executor.allowCoreThreadTimeOut(true);
@@ -175,7 +189,7 @@ public class Camerapture {
             synchronized (collectors) {
                 collector = collectors.computeIfAbsent(packet.uuid(), (uuid) -> new ByteCollector((bytes) -> {
                     collectors.remove(uuid);
-                    EXECUTOR.execute(() -> {
+                    IMAGE_EXECUTOR.execute(() -> {
                         try {
                             MinecraftServer server = player.server;
 

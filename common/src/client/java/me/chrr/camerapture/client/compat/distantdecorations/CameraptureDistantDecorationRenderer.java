@@ -30,7 +30,7 @@ public class CameraptureDistantDecorationRenderer implements DecorationClientRen
 
     @Override
     public double cullBelowProjectedPixelSize() {
-        return 0.01;
+        return 0.25;
     }
 
     @Override
@@ -52,9 +52,9 @@ public class CameraptureDistantDecorationRenderer implements DecorationClientRen
             return;
         }
 
-        // Strictly request thumbnail quality (32x32) for distant decorations
-        RemotePicture picture = ClientPictureStore.getInstance().getPicture(data.pictureId(), PictureQuality.THUMBNAIL);
-        PictureTexture texture = (picture != null) ? picture.getEffectiveTexture(PictureQuality.THUMBNAIL) : null;
+        // Strictly request thumbnail quality for distant decorations and resolve with throttled LRU touch
+        me.chrr.camerapture.picture.ResolvedPicture resolved = ClientPictureStore.getInstance().resolveForRender(data.pictureId(), PictureQuality.THUMBNAIL);
+        PictureTexture texture = resolved.texture();
 
         BlockPos anchorPos = record.pos();
         Vec3 cameraPos = camera.position();
@@ -79,8 +79,8 @@ public class CameraptureDistantDecorationRenderer implements DecorationClientRen
 
         int lightCoords = 0x00F000F0;
 
-        // Render rear quad for distant decorations if enabled in client config
-        if (Camerapture.CONFIG_MANAGER.getConfig().client.renderPictureFrameBacking) {
+        // Render rear quad for distant decorations only when large enough to be visually discernible (>= 4px)
+        if (Camerapture.CONFIG_MANAGER.getConfig().client.renderPictureFrameBacking && projectedPixelSize >= 4.0) {
             PictureFrameGeometry.submitBackQuad(poseStack, submitNodeCollector, data.width(), data.height(), lightCoords);
         }
 

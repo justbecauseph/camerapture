@@ -54,8 +54,13 @@ public class ByteCollector {
         int offset = 0;
         while (bytesLeft > 0) {
             int size = Math.min(sectionSize, bytesLeft);
-            byte[] section = new byte[size];
-            System.arraycopy(bytes, offset, section, 0, size);
+            byte[] section;
+            if (offset == 0 && size == bytes.length) {
+                section = bytes;
+            } else {
+                section = new byte[size];
+                System.arraycopy(bytes, offset, section, 0, size);
+            }
             callback.accept(section, bytesLeft - size);
 
             offset += size;

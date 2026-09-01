@@ -34,7 +34,7 @@ public class FabricNetworkAdapter implements NetworkAdapter {
         ClientPacketType<P> type = new ClientPacketType<>(netCodec, new ArrayList<>());
         this.clientPackets.put(clazz, type);
 
-        StreamCodec<ByteBuf, P> codec = ByteBufCodecs.fromCodec(netCodec.codec());
+        StreamCodec<ByteBuf, P> codec = netCodec.streamCodec();
         PayloadTypeRegistry.serverboundPlay().register(
                 new CustomPacketPayload.Type<PacketPayload<P>>(netCodec.id()),
                 StreamCodec.composite(codec, PacketPayload::packet, p -> new PacketPayload<>(netCodec.id(), p))
@@ -50,7 +50,7 @@ public class FabricNetworkAdapter implements NetworkAdapter {
         ServerPacketType<P> type = new ServerPacketType<>(netCodec, new ArrayList<>());
         this.serverPackets.put(clazz, type);
 
-        StreamCodec<io.netty.buffer.ByteBuf, P> codec = ByteBufCodecs.fromCodec(netCodec.codec());
+        StreamCodec<io.netty.buffer.ByteBuf, P> codec = netCodec.streamCodec();
         PayloadTypeRegistry.clientboundPlay().register(
                 new CustomPacketPayload.Type<PacketPayload<P>>(netCodec.id()),
                 StreamCodec.composite(codec, PacketPayload::packet, p -> new PacketPayload<>(netCodec.id(), p))
