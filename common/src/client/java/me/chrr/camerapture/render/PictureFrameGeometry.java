@@ -146,18 +146,31 @@ public class PictureFrameGeometry {
         float y1 = -height / 2f;
         float y2 = height / 2f;
 
-        RenderType renderType =
+        // Pass 1: Always submit the solid, depth-tested opaque base quad
+        RenderType baseRenderType =
                 RenderTypes.entityCutoutCull(texture.getTextureIdentifier());
 
         int effectiveLight = isGlowing ? 0x00F000F0 : lightCoords;
 
-        collector.submitCustomGeometry(poseStack, renderType, (matrix, buffer) -> {
+        collector.submitCustomGeometry(poseStack, baseRenderType, (matrix, buffer) -> {
             Matrix4f position = matrix.pose();
             buffer.addVertex(position, x1, y1, PICTURE_Z).setColor(0xffffffff).setUv(1f, 1f).setOverlay(OverlayTexture.NO_OVERLAY).setLight(effectiveLight).setNormal(matrix, 0f, 0f, -1f);
             buffer.addVertex(position, x1, y2, PICTURE_Z).setColor(0xffffffff).setUv(1f, 0f).setOverlay(OverlayTexture.NO_OVERLAY).setLight(effectiveLight).setNormal(matrix, 0f, 0f, -1f);
             buffer.addVertex(position, x2, y2, PICTURE_Z).setColor(0xffffffff).setUv(0f, 0f).setOverlay(OverlayTexture.NO_OVERLAY).setLight(effectiveLight).setNormal(matrix, 0f, 0f, -1f);
             buffer.addVertex(position, x2, y1, PICTURE_Z).setColor(0xffffffff).setUv(0f, 1f).setOverlay(OverlayTexture.NO_OVERLAY).setLight(effectiveLight).setNormal(matrix, 0f, 0f, -1f);
         });
+
+        // Pass 2: For glowing pictures, submit a second emissive overlay pass using eyes render type for shader bloom/emissivity
+        if (isGlowing) {
+            RenderType emissiveRenderType = RenderTypes.eyes(texture.getTextureIdentifier());
+            collector.submitCustomGeometry(poseStack, emissiveRenderType, (matrix, buffer) -> {
+                Matrix4f position = matrix.pose();
+                buffer.addVertex(position, x1, y1, PICTURE_Z).setColor(0xffffffff).setUv(1f, 1f).setOverlay(OverlayTexture.NO_OVERLAY).setLight(0x00F000F0).setNormal(matrix, 0f, 0f, -1f);
+                buffer.addVertex(position, x1, y2, PICTURE_Z).setColor(0xffffffff).setUv(1f, 0f).setOverlay(OverlayTexture.NO_OVERLAY).setLight(0x00F000F0).setNormal(matrix, 0f, 0f, -1f);
+                buffer.addVertex(position, x2, y2, PICTURE_Z).setColor(0xffffffff).setUv(0f, 0f).setOverlay(OverlayTexture.NO_OVERLAY).setLight(0x00F000F0).setNormal(matrix, 0f, 0f, -1f);
+                buffer.addVertex(position, x2, y1, PICTURE_Z).setColor(0xffffffff).setUv(0f, 1f).setOverlay(OverlayTexture.NO_OVERLAY).setLight(0x00F000F0).setNormal(matrix, 0f, 0f, -1f);
+            });
+        }
     }
 
     /// Renders the placeholder quad.

@@ -28,16 +28,20 @@ public class PictureFrameGeometryTest {
         
         String renderPictureBody = source.substring(methodIndex, nextMethodIndex);
 
-        // 1. Assert renderPicture does not select RenderTypes.text based on isGlowing
+        // 1. Assert opaque base pass always exists (depth-tested entityCutoutCull)
+        assertTrue(renderPictureBody.contains("RenderTypes.entityCutoutCull"),
+                "renderPicture must always submit an opaque base pass with entityCutoutCull");
+
+        // 2. Assert glowing pictures no longer use RenderTypes.text as their sole render path
         assertFalse(renderPictureBody.contains("RenderTypes.text"),
                 "renderPicture must not select RenderTypes.text for glowing pictures");
 
-        // 2. Assert renderPicture uses RenderTypes.entityCutoutCull unconditionally
-        assertTrue(renderPictureBody.contains("RenderTypes.entityCutoutCull"),
-                "renderPicture must use entityCutoutCull");
-
-        // 3. Assert fullbright light is still used when isGlowing
-        assertTrue(renderPictureBody.contains("isGlowing ? 0x00F000F0 : lightCoords"),
-                "renderPicture must use fullbright light 0x00F000F0 when isGlowing is true");
+        // 3. Assert glowing has a separate emissive pass using an emissive render type (eyes)
+        assertTrue(renderPictureBody.contains("RenderTypes.eyes"),
+                "renderPicture must submit a second emissive overlay pass using RenderTypes.eyes for glowing pictures");
+        assertTrue(renderPictureBody.contains("if (isGlowing)"),
+                "renderPicture must guard the emissive overlay pass with isGlowing");
+        assertTrue(renderPictureBody.contains("0x00F000F0"),
+                "renderPicture must use fullbright light (0x00F000F0) for emissive rendering");
     }
 }
