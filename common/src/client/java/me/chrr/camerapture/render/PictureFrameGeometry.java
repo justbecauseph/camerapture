@@ -146,9 +146,8 @@ public class PictureFrameGeometry {
         float y1 = -height / 2f;
         float y2 = height / 2f;
 
-        RenderType renderType = isGlowing
-                ? RenderTypes.text(texture.getTextureIdentifier())
-                : RenderTypes.entityCutoutCull(texture.getTextureIdentifier());
+        RenderType renderType =
+                RenderTypes.entityCutoutCull(texture.getTextureIdentifier());
 
         int effectiveLight = isGlowing ? 0x00F000F0 : lightCoords;
 
