@@ -84,8 +84,10 @@ public class CameraptureClientFabric implements ClientModInitializer {
             CameraptureClient.syncedConfig = SyncedConfig.fromServerConfig(Camerapture.CONFIG_MANAGER.getConfig().server);
         });
 
-        // Process any received pictures once per tick.
-        ClientTickEvents.START_CLIENT_TICK.register((minecraft) ->
-                ClientPictureStore.getInstance().processQueue());
+        // Process received pictures and recover a frame menu whose screen did not open.
+        ClientTickEvents.START_CLIENT_TICK.register((minecraft) -> {
+            ClientPictureStore.getInstance().processQueue();
+            CameraptureClient.recoverOrphanedFrameMenu(minecraft);
+        });
     }
 }

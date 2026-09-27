@@ -2,6 +2,7 @@ package me.chrr.camerapture;
 
 import me.chrr.camerapture.compat.FirstPersonModelCompat;
 import me.chrr.camerapture.config.SyncedConfig;
+import me.chrr.camerapture.gui.PictureFrameMenu;
 import me.chrr.camerapture.gui.PictureScreen;
 import me.chrr.camerapture.gui.UploadScreen;
 import me.chrr.camerapture.item.AlbumItem;
@@ -14,6 +15,8 @@ import me.chrr.camerapture.net.clientbound.SyncConfigPacket;
 import me.chrr.camerapture.picture.ClientPictureStore;
 import me.chrr.camerapture.picture.PictureTaker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.MenuAccess;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.InteractionResult;
@@ -91,6 +94,15 @@ public class CameraptureClient {
             Camerapture.LOGGER.info("received synced config: {}", packet.syncedConfig());
             syncedConfig = packet.syncedConfig();
         });
+    }
+
+    /// Close a frame menu if its screen was never shown or was replaced.
+    public static void recoverOrphanedFrameMenu(Minecraft minecraft) {
+        LocalPlayer player = minecraft.player;
+        if (player != null && player.containerMenu instanceof PictureFrameMenu menu
+                && (!(minecraft.gui.screen() instanceof MenuAccess<?> screen) || screen.getMenu() != menu)) {
+            player.closeContainer();
+        }
     }
 
     /// Right-clicking on certain items should open client-side GUI's.

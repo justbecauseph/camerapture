@@ -118,6 +118,12 @@ public class PictureFrameScreen extends AbstractContainerScreen<PictureFrameMenu
     }
 
     @Override
+    public void removed() {
+        this.menu.removeSlotListener(this);
+        super.removed();
+    }
+
+    @Override
     public void extractBackground(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
         super.extractBackground(graphics, mouseX, mouseY, a);
         graphics.blit(RenderPipelines.GUI_TEXTURED, TEXTURE, leftPos, topPos, 0f, 0f, imageWidth, imageHeight, 256, 256);
@@ -130,6 +136,11 @@ public class PictureFrameScreen extends AbstractContainerScreen<PictureFrameMenu
     }
 
     private void updateButtons() {
+        if (upButton == null || leftButton == null || rightButton == null || downButton == null
+                || glowingCheckbox == null || fixedCheckbox == null) {
+            return;
+        }
+
         if (this.minecraft.hasShiftDown()) {
             upButton.setMessage(Component.nullToEmpty("↓"));
             leftButton.setMessage(Component.nullToEmpty("→"));

@@ -193,6 +193,7 @@ public class CameraptureClientNeoForge {
         @SubscribeEvent
         public void onClientTick(ClientTickEvent.Pre event) {
             ClientPictureStore.getInstance().processQueue();
+            CameraptureClient.recoverOrphanedFrameMenu(Minecraft.getInstance());
         }
     }
 }

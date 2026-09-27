@@ -7,6 +7,7 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerData;
 import net.minecraft.world.inventory.SimpleContainerData;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.AABB;
 import org.jetbrains.annotations.Nullable;
 
 public class PictureFrameMenu extends AbstractContainerMenu {
@@ -81,6 +82,20 @@ public class PictureFrameMenu extends AbstractContainerMenu {
 
     @Override
     public boolean stillValid(Player player) {
-        return true;
+        if (this.blockEntity == null) {
+            return true;
+        }
+
+        if (this.blockEntity.getLevel() != player.level()
+                || player.level().getBlockEntity(this.blockEntity.getBlockPos()) != this.blockEntity) {
+            return false;
+        }
+
+        // The frame can extend 16 blocks from its anchor. Check reach against the
+        // picture's full interaction shape so opening it from a distant edge works.
+        // Keep the same four-block allowance as vanilla container menus.
+        AABB bounds = this.blockEntity.getFrameShape().bounds().move(this.blockEntity.getBlockPos());
+        double reach = player.getContainerInteractionRange() + 4.0;
+        return bounds.distanceToSqr(player.getEyePosition()) < reach * reach;
     }
 }

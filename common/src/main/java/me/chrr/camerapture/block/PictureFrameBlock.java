@@ -105,7 +105,9 @@ public class PictureFrameBlock extends HorizontalDirectionalBlock implements Ent
         }
 
         if (player.isShiftKeyDown()) {
-            player.openMenu(blockEntity);
+            if (!level.isClientSide()) {
+                player.openMenu(blockEntity);
+            }
             return InteractionResult.SUCCESS;
         }
 
