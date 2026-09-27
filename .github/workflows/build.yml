@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [ "1.*" ]
+    branches: [ "codex/1.21.1-*" ]
   pull_request:
 
 jobs:
@@ -21,8 +21,8 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Build for all platforms
-        run: ./gradlew buildAll
+      - name: Build NeoForge 1.21.1 port
+        run: ./gradlew build
 
       - uses: actions/upload-artifact@v4
         with:

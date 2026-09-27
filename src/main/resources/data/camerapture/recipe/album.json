@@ -1,0 +1,20 @@
+{
+    "type": "minecraft:crafting_shaped",
+    "key": {
+        "P": {
+            "item": "minecraft:paper"
+        },
+        "B": {
+            "item": "minecraft:writable_book"
+        }
+    },
+    "pattern": [
+        "P",
+        "B",
+        "P"
+    ],
+    "result": {
+        "id": "camerapture:album",
+        "count": 1
+    }
+}

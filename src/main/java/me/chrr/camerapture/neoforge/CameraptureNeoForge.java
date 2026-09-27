@@ -1,0 +1,124 @@
+package me.chrr.camerapture.neoforge;
+
+import me.chrr.camerapture.Camerapture;
+import me.chrr.camerapture.DownloadQueue;
+import me.chrr.camerapture.block.PictureFrameBlock;
+import me.chrr.camerapture.block.PictureFrameBlockEntity;
+import me.chrr.camerapture.config.Config;
+import me.chrr.camerapture.config.SyncedConfig;
+import me.chrr.camerapture.entity.LegacyPictureFrameEntity;
+import me.chrr.camerapture.item.AlbumItem;
+import me.chrr.camerapture.item.CameraItem;
+import me.chrr.camerapture.item.PictureItem;
+import me.chrr.camerapture.net.clientbound.DownloadPartialPicturePacket;
+import me.chrr.camerapture.net.clientbound.PictureErrorPacket;
+import me.chrr.camerapture.net.clientbound.RequestUploadPacket;
+import me.chrr.camerapture.net.clientbound.SyncConfigPacket;
+import me.chrr.camerapture.net.serverbound.NewPicturePacket;
+import me.chrr.camerapture.net.serverbound.RequestDownloadPacket;
+import me.chrr.camerapture.net.serverbound.UploadPartialPicturePacket;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.stats.StatFormatter;
+import net.minecraft.stats.Stats;
+import net.minecraft.world.item.CreativeModeTabs;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent;
+import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+import net.neoforged.neoforge.registries.RegisterEvent;
+
+@Mod("camerapture")
+public class CameraptureNeoForge {
+   public CameraptureNeoForge(IEventBus modBus) {
+      modBus.register(this);
+      NeoForge.EVENT_BUS.register(new CameraptureNeoForge.ServerEvents());
+   }
+
+   @SubscribeEvent
+   public void setup(FMLCommonSetupEvent event) {
+      Camerapture.CONFIG_MANAGER.load();
+   }
+
+   @SubscribeEvent
+   public void registerContent(RegisterEvent event) {
+      event.register(Registries.ITEM, registry -> registry.register(CameraItem.KEY, Camerapture.CAMERA));
+      event.register(Registries.SOUND_EVENT, registry -> registry.register(Camerapture.id("camera_shutter"), Camerapture.CAMERA_SHUTTER));
+      event.register(Registries.CUSTOM_STAT, registry -> {
+         registry.register(Camerapture.PICTURES_TAKEN, Camerapture.PICTURES_TAKEN);
+         Stats.CUSTOM.get(Camerapture.PICTURES_TAKEN, StatFormatter.DEFAULT);
+      });
+      event.register(Registries.ITEM, registry -> registry.register(PictureItem.KEY, Camerapture.PICTURE));
+      event.register(Registries.RECIPE_SERIALIZER, registry -> registry.register(Camerapture.id("picture_cloning"), Camerapture.PICTURE_CLONING));
+      event.register(Registries.RECIPE_SERIALIZER, registry -> registry.register(Camerapture.id("album_cloning"), Camerapture.ALBUM_CLONING));
+      event.register(Registries.ITEM, registry -> registry.register(AlbumItem.KEY, Camerapture.ALBUM));
+      event.register(Registries.MENU, registry -> registry.register(Camerapture.id("album"), Camerapture.ALBUM_SCREEN_HANDLER));
+      event.register(Registries.MENU, registry -> registry.register(Camerapture.id("album_lectern"), Camerapture.ALBUM_LECTERN_SCREEN_HANDLER));
+      event.register(Registries.BLOCK, registry -> registry.register(PictureFrameBlock.KEY, Camerapture.PICTURE_FRAME_BLOCK));
+      event.register(Registries.BLOCK_ENTITY_TYPE, registry -> registry.register(PictureFrameBlockEntity.KEY, Camerapture.PICTURE_FRAME_BLOCK_ENTITY));
+      event.register(Registries.ENTITY_TYPE, registry -> registry.register(Camerapture.id("picture_frame"), Camerapture.LEGACY_PICTURE_FRAME));
+      event.register(Registries.MENU, registry -> registry.register(Camerapture.id("picture_frame"), Camerapture.PICTURE_FRAME_SCREEN_HANDLER));
+      event.register(Registries.DATA_COMPONENT_TYPE, registry -> registry.register(Camerapture.id("picture_data"), Camerapture.PICTURE_DATA));
+      event.register(Registries.DATA_COMPONENT_TYPE, registry -> registry.register(Camerapture.id("camera_active"), Camerapture.CAMERA_ACTIVE));
+   }
+
+   @SubscribeEvent
+   public void registerPackets(RegisterPayloadHandlersEvent event) {
+      NeoForgeNetworkAdapter networkAdapter = (NeoForgeNetworkAdapter)Camerapture.NETWORK;
+      PayloadRegistrar registrar = event.registrar("1");
+      networkAdapter.registerServerBound(registrar, NewPicturePacket.class, NewPicturePacket.NET_CODEC);
+      networkAdapter.registerServerBound(registrar, RequestDownloadPacket.class, RequestDownloadPacket.NET_CODEC);
+      networkAdapter.registerServerBound(registrar, UploadPartialPicturePacket.class, UploadPartialPicturePacket.NET_CODEC);
+      networkAdapter.registerClientBound(registrar, PictureErrorPacket.class, PictureErrorPacket.NET_CODEC);
+      networkAdapter.registerClientBound(registrar, RequestUploadPacket.class, RequestUploadPacket.NET_CODEC);
+      networkAdapter.registerClientBound(registrar, SyncConfigPacket.class, SyncConfigPacket.NET_CODEC);
+      networkAdapter.registerClientBound(registrar, DownloadPartialPicturePacket.class, DownloadPartialPicturePacket.NET_CODEC);
+      Camerapture.registerPacketHandlers();
+   }
+
+   @SubscribeEvent
+   public void fillCreativeTab(BuildCreativeModeTabContentsEvent event) {
+      if (event.getTabKey() == CreativeModeTabs.TOOLS_AND_UTILITIES) {
+         event.accept(Camerapture.CAMERA);
+         event.accept(Camerapture.ALBUM);
+      }
+   }
+
+   private static class ServerEvents {
+      @SubscribeEvent
+      public void onServerAboutToStart(ServerAboutToStartEvent event) {
+         LegacyPictureFrameEntity.beginMigrationSession();
+      }
+
+      @SubscribeEvent
+      public void onPlayerJoin(PlayerLoggedInEvent event) {
+         Config config = Camerapture.CONFIG_MANAGER.getConfig();
+         Camerapture.NETWORK.sendToClient((ServerPlayer)event.getEntity(), new SyncConfigPacket(SyncedConfig.fromServerConfig(config.server)));
+      }
+
+      @SubscribeEvent
+      public void onServerStarted(ServerStartedEvent event) {
+         DownloadQueue.getInstance().start(Camerapture.CONFIG_MANAGER.getConfig().server.msPerPicture);
+         Camerapture.LOGGER.info("Legacy entity-to-block picture-frame migration is active; frames migrate as their chunks load");
+      }
+
+      @SubscribeEvent
+      public void onServerStopping(ServerStoppingEvent event) {
+         DownloadQueue.getInstance().stop();
+         Camerapture.LOGGER
+            .info(
+               "Legacy picture-frame migration summary for frames encountered this run: {} migrated, {} pending",
+               LegacyPictureFrameEntity.getMigratedCount(),
+               LegacyPictureFrameEntity.getPendingCount()
+            );
+      }
+   }
+}

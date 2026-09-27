@@ -1,41 +1,20 @@
-# Camerapture
+# Camerapture — NeoForge 1.21.1 reconstruction
 
-> Fabric mod with cameras that can take pictures!
+This branch contains source reconstructed from the supplied Camerapture
+`2.0.0-neoforge.2` JAR. It is a single-module NeoForge 1.21.1 project.
+See [BUILD_PROVENANCE.md](BUILD_PROVENANCE.md) for the input hash, pinned
+dependencies, and limits of the reconstruction.
 
-![Version](https://img.shields.io/github/v/release/chrrs/camerapture?include_prereleases&style=flat-square)
-![Build status](https://img.shields.io/github/actions/workflow/status/chrrs/camerapture/build.yml?style=flat-square)
-[![Modrinth](https://img.shields.io/modrinth/dt/9dzLWnmZ?style=flat-square&logo=modrinth)](https://modrinth.com/mod/camerapture)
-[![CurseForge](https://img.shields.io/curseforge/dt/1051342?style=flat-square&logo=curseforge)](https://curseforge.com/minecraft/mc-mods/camerapture)
+Build with Java 21 and `./gradlew build`. The patched development JAR is
+written to `build/libs/camerapture-2.0.0-neoforge.3-dev.jar`. Do not install it
+alongside the original JAR, since both register the `camerapture` mod ID.
 
-Read more about it on [Modrinth](https://modrinth.com/mod/camerapture)
-or [CurseForge](https://curseforge.com/minecraft/mc-mods/camerapture).
+The frame-menu repair keeps the server menu tied to a live, nearby frame,
+closes a client menu that has no matching visible screen, and guards screen
+updates until its controls exist. These changes target the invisible menu
+state reported after crouch-interacting with a frame using an empty hand.
+Compilation and packaging do not establish that the rare interaction is
+eliminated in a running client/server; that still needs in-game verification.
 
-## Project Structure
-
-Camerapture supports multiple Minecraft versions using branches. See the list of branches for versions Camerapture
-supports. Any version prefixed with `old/` is not supported anymore.
-
-### Update checklist
-
-- Create a new branch based on the latest branch.
-- Update minecraft version.
-    - Change in `gradle.properties` and update all dependencies.
-    - **Optional:** Deprecate older version(s) by adding `old/` to the branch name.
-- Fix all conflicts and test on all loaders.
-- Release new version as described below.
-
-### Release checklist
-
-- Update the version number.
-    - Change in `gradle.properties`.
-    - Add an entry in `CHANGELOG.md`.
-- Commit and push a new tag. (example: `v1.2.3`)
-    - Tag name is the version number prefixed by `v`.
-- Cherry pick the changes onto the other branches and fix all conflicts.
-- Manually trigger the Publish workflow on GitHub for every version.
-
-## Credits
-
-- henkelmax for making the [Camera Mod for Forge](https://modrinth.com/mod/camera-mod) that's used on the QSMP, for
-  being the main inspiration of this mod.
-- All the great people on our origins server for being amazing and patient with me <3
+Original Camerapture author: chrrrs. This branch is derived from the supplied
+NeoForge port artifact and retains its original mod metadata and assets.
