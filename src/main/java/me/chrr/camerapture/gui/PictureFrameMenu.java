@@ -7,6 +7,7 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerData;
 import net.minecraft.world.inventory.SimpleContainerData;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.AABB;
 import org.jetbrains.annotations.Nullable;
 
 public class PictureFrameMenu extends AbstractContainerMenu {
@@ -71,8 +72,13 @@ public class PictureFrameMenu extends AbstractContainerMenu {
          return true;
       }
 
-      return this.blockEntity.getLevel() == player.level()
-         && player.level().getBlockEntity(this.blockEntity.getBlockPos()) == this.blockEntity
-         && player.canInteractWithBlock(this.blockEntity.getBlockPos(), 4.0);
+      if (this.blockEntity.getLevel() != player.level()
+         || player.level().getBlockEntity(this.blockEntity.getBlockPos()) != this.blockEntity) {
+         return false;
+      }
+
+      AABB frameBounds = this.blockEntity.getFrameShape().bounds().move(this.blockEntity.getBlockPos());
+      double reach = player.blockInteractionRange() + 4.0;
+      return frameBounds.distanceToSqr(player.getEyePosition()) < reach * reach;
    }
 }

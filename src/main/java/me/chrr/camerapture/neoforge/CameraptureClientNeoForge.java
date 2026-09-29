@@ -11,6 +11,7 @@ import me.chrr.camerapture.gui.CameraViewFinder;
 import me.chrr.camerapture.gui.PictureFrameMenu;
 import me.chrr.camerapture.gui.PictureFrameScreen;
 import me.chrr.camerapture.item.CameraItem;
+import me.chrr.camerapture.net.serverbound.OpenPictureFramePacket;
 import me.chrr.camerapture.picture.ClientPictureStore;
 import me.chrr.camerapture.picture.PictureTaker;
 import me.chrr.camerapture.render.PictureItemRenderer;
@@ -18,6 +19,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.MenuAccess;
 import net.minecraft.client.model.HumanoidModel.ArmPose;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.client.renderer.entity.NoopRenderer;
 import net.minecraft.client.renderer.item.ItemProperties;
 import net.minecraft.world.InteractionHand;
@@ -26,6 +29,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.BlockHitResult;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -98,8 +102,34 @@ public class CameraptureClientNeoForge {
    }
 
    private static class ClientEvents {
+      private BlockPos pendingFrame;
+      private int pendingAtTick;
+
       @SubscribeEvent
-      public void onAttack(InteractionKeyMappingTriggered event) {
+      public void onInteractionKey(InteractionKeyMappingTriggered event) {
+         if (event.isUseItem() && event.getHand() == InteractionHand.MAIN_HAND) {
+            Minecraft minecraft = Minecraft.getInstance();
+            LocalPlayer player = minecraft.player;
+            if (player != null
+               && minecraft.options.keyShift.isDown()
+               && player.getMainHandItem().isEmpty()
+               && minecraft.hitResult instanceof BlockHitResult hit
+               && minecraft.level.getBlockState(hit.getBlockPos()).is(Camerapture.PICTURE_FRAME_BLOCK)) {
+               if (this.pendingFrame == null
+                  || !this.pendingFrame.equals(hit.getBlockPos())
+                  || player.tickCount - this.pendingAtTick >= 100) {
+                  this.pendingFrame = hit.getBlockPos().immutable();
+                  this.pendingAtTick = player.tickCount;
+                  minecraft.getConnection().send(new ServerboundSetCarriedItemPacket(player.getInventory().selected));
+                  Camerapture.NETWORK.sendToServer(new OpenPictureFramePacket(this.pendingFrame, hit.getLocation()));
+               }
+
+               event.setSwingHand(false);
+               event.setCanceled(true);
+               return;
+            }
+         }
+
          if (event.isAttack()) {
             LocalPlayer player = Minecraft.getInstance().player;
             if (player != null) {
@@ -134,6 +164,7 @@ public class CameraptureClientNeoForge {
 
       @SubscribeEvent
       public void onDisconnect(LoggingOut event) {
+         this.pendingFrame = null;
          ClientPictureStore.getInstance().clear();
          CameraptureClient.syncedConfig = SyncedConfig.fromServerConfig(Camerapture.CONFIG_MANAGER.getConfig().server);
       }
@@ -180,9 +211,19 @@ public class CameraptureClientNeoForge {
 
          Minecraft minecraft = Minecraft.getInstance();
          LocalPlayer player = minecraft.player;
-         if (player != null
-            && player.containerMenu instanceof PictureFrameMenu menu
+         if (player == null) {
+            this.pendingFrame = null;
+            return;
+         }
+         if (minecraft.screen instanceof PictureFrameScreen) {
+            this.pendingFrame = null;
+         } else if (this.pendingFrame != null && player.tickCount - this.pendingAtTick >= 100) {
+            Camerapture.LOGGER.warn("Picture frame editor did not open for {} within 5 seconds", this.pendingFrame);
+            this.pendingFrame = null;
+         }
+         if (player.containerMenu instanceof PictureFrameMenu menu
             && (!(minecraft.screen instanceof MenuAccess<?> menuAccess) || menuAccess.getMenu() != menu)) {
+            Camerapture.LOGGER.warn("Closing picture frame menu {} because its screen is missing", menu.containerId);
             player.closeContainer();
          }
       }

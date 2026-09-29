@@ -15,6 +15,7 @@ import me.chrr.camerapture.net.clientbound.PictureErrorPacket;
 import me.chrr.camerapture.net.clientbound.RequestUploadPacket;
 import me.chrr.camerapture.net.clientbound.SyncConfigPacket;
 import me.chrr.camerapture.net.serverbound.NewPicturePacket;
+import me.chrr.camerapture.net.serverbound.OpenPictureFramePacket;
 import me.chrr.camerapture.net.serverbound.RequestDownloadPacket;
 import me.chrr.camerapture.net.serverbound.UploadPartialPicturePacket;
 import net.minecraft.core.registries.Registries;
@@ -73,8 +74,9 @@ public class CameraptureNeoForge {
    @SubscribeEvent
    public void registerPackets(RegisterPayloadHandlersEvent event) {
       NeoForgeNetworkAdapter networkAdapter = (NeoForgeNetworkAdapter)Camerapture.NETWORK;
-      PayloadRegistrar registrar = event.registrar("1");
+      PayloadRegistrar registrar = event.registrar("2");
       networkAdapter.registerServerBound(registrar, NewPicturePacket.class, NewPicturePacket.NET_CODEC);
+      networkAdapter.registerServerBound(registrar, OpenPictureFramePacket.class, OpenPictureFramePacket.NET_CODEC);
       networkAdapter.registerServerBound(registrar, RequestDownloadPacket.class, RequestDownloadPacket.NET_CODEC);
       networkAdapter.registerServerBound(registrar, UploadPartialPicturePacket.class, UploadPartialPicturePacket.NET_CODEC);
       networkAdapter.registerClientBound(registrar, PictureErrorPacket.class, PictureErrorPacket.NET_CODEC);

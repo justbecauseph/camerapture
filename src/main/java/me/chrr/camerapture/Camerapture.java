@@ -26,6 +26,7 @@ import me.chrr.camerapture.net.NetworkAdapter;
 import me.chrr.camerapture.net.clientbound.PictureErrorPacket;
 import me.chrr.camerapture.net.clientbound.RequestUploadPacket;
 import me.chrr.camerapture.net.serverbound.NewPicturePacket;
+import me.chrr.camerapture.net.serverbound.OpenPictureFramePacket;
 import me.chrr.camerapture.net.serverbound.RequestDownloadPacket;
 import me.chrr.camerapture.net.serverbound.UploadPartialPicturePacket;
 import me.chrr.camerapture.picture.PictureQuality;
@@ -52,6 +53,7 @@ import net.minecraft.world.item.crafting.SimpleCraftingRecipeSerializer;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.entity.BlockEntityType.Builder;
+import net.minecraft.world.phys.Vec3;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -119,6 +121,24 @@ public class Camerapture {
    }
 
    public static void registerPacketHandlers() {
+      NETWORK.onReceiveFromClient(OpenPictureFramePacket.class, (packet, player) -> {
+         Vec3 hitOffset = packet.hitLocation().subtract(Vec3.atCenterOf(packet.pos()));
+         if (player.getMainHandItem().isEmpty()
+            && player.level().getWorldBorder().isWithinBounds(packet.pos())
+            && player.level().mayInteract(player, packet.pos())
+            && player.canInteractWithBlock(packet.pos(), 1.0)
+            && Math.abs(hitOffset.x) < 1.0000001
+            && Math.abs(hitOffset.y) < 1.0000001
+            && Math.abs(hitOffset.z) < 1.0000001
+            && player.level().getBlockEntity(packet.pos()) instanceof PictureFrameBlockEntity frame) {
+            if (player.containerMenu instanceof PictureFrameMenu) {
+               player.closeContainer();
+            }
+            if (player.containerMenu == player.inventoryMenu) {
+               player.openMenu(frame);
+            }
+         }
+      });
       NETWORK.onReceiveFromClient(NewPicturePacket.class, (packet, player) -> {
          CameraItem.HeldCamera camera = CameraItem.find(player, false);
          if (camera != null) {
