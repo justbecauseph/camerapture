@@ -14,6 +14,7 @@ import me.chrr.camerapture.net.clientbound.PictureErrorPacket;
 import me.chrr.camerapture.net.clientbound.RequestUploadPacket;
 import me.chrr.camerapture.net.serverbound.NewPicturePacket;
 import me.chrr.camerapture.net.serverbound.RequestDownloadPacket;
+import me.chrr.camerapture.net.serverbound.RequestPictureFrameEditorPacket;
 import me.chrr.camerapture.net.clientbound.SyncConfigPacket;
 import me.chrr.camerapture.net.serverbound.UploadPartialPicturePacket;
 import me.chrr.tapestry.gradle.annotation.FabricEntrypoint;
@@ -77,6 +78,7 @@ public class CameraptureFabric implements ModInitializer {
 
         networkAdapter.registerServerBound(NewPicturePacket.class, NewPicturePacket.NET_CODEC);
         networkAdapter.registerServerBound(RequestDownloadPacket.class, RequestDownloadPacket.NET_CODEC);
+        networkAdapter.registerServerBound(RequestPictureFrameEditorPacket.class, RequestPictureFrameEditorPacket.NET_CODEC);
         networkAdapter.registerServerBound(UploadPartialPicturePacket.class, UploadPartialPicturePacket.NET_CODEC);
         networkAdapter.registerClientBound(PictureErrorPacket.class, PictureErrorPacket.NET_CODEC);
         networkAdapter.registerClientBound(RequestUploadPacket.class, RequestUploadPacket.NET_CODEC);

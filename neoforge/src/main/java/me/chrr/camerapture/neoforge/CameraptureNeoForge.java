@@ -14,6 +14,7 @@ import me.chrr.camerapture.net.clientbound.PictureErrorPacket;
 import me.chrr.camerapture.net.clientbound.RequestUploadPacket;
 import me.chrr.camerapture.net.serverbound.NewPicturePacket;
 import me.chrr.camerapture.net.serverbound.RequestDownloadPacket;
+import me.chrr.camerapture.net.serverbound.RequestPictureFrameEditorPacket;
 import me.chrr.camerapture.net.clientbound.SyncConfigPacket;
 import me.chrr.camerapture.net.serverbound.UploadPartialPicturePacket;
 import net.minecraft.world.item.CreativeModeTabs;
@@ -97,6 +98,7 @@ public class CameraptureNeoForge {
 
         networkAdapter.registerServerBound(registrar, NewPicturePacket.class, NewPicturePacket.NET_CODEC);
         networkAdapter.registerServerBound(registrar, RequestDownloadPacket.class, RequestDownloadPacket.NET_CODEC);
+        networkAdapter.registerServerBound(registrar, RequestPictureFrameEditorPacket.class, RequestPictureFrameEditorPacket.NET_CODEC);
         networkAdapter.registerServerBound(registrar, UploadPartialPicturePacket.class, UploadPartialPicturePacket.NET_CODEC);
         networkAdapter.registerClientBound(registrar, PictureErrorPacket.class, PictureErrorPacket.NET_CODEC);
         networkAdapter.registerClientBound(registrar, RequestUploadPacket.class, RequestUploadPacket.NET_CODEC);

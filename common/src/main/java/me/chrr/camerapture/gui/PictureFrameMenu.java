@@ -86,15 +86,19 @@ public class PictureFrameMenu extends AbstractContainerMenu {
             return true;
         }
 
-        if (this.blockEntity.getLevel() != player.level()
-                || player.level().getBlockEntity(this.blockEntity.getBlockPos()) != this.blockEntity) {
+        return canInteractWithFrame(player, this.blockEntity);
+    }
+
+    public static boolean canInteractWithFrame(Player player, PictureFrameBlockEntity blockEntity) {
+        if (blockEntity.getLevel() != player.level()
+                || player.level().getBlockEntity(blockEntity.getBlockPos()) != blockEntity) {
             return false;
         }
 
         // The frame can extend 16 blocks from its anchor. Check reach against the
         // picture's full interaction shape so opening it from a distant edge works.
         // Keep the same four-block allowance as vanilla container menus.
-        AABB bounds = this.blockEntity.getFrameShape().bounds().move(this.blockEntity.getBlockPos());
+        AABB bounds = blockEntity.getFrameShape().bounds().move(blockEntity.getBlockPos());
         double reach = player.getContainerInteractionRange() + 4.0;
         return bounds.distanceToSqr(player.getEyePosition()) < reach * reach;
     }

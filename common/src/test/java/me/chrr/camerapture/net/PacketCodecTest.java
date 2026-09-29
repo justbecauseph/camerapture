@@ -6,8 +6,11 @@ import io.netty.handler.codec.DecoderException;
 import me.chrr.camerapture.TransportLimits;
 import me.chrr.camerapture.net.clientbound.DownloadPartialPicturePacket;
 import me.chrr.camerapture.net.serverbound.UploadPartialPicturePacket;
+import me.chrr.camerapture.net.serverbound.RequestPictureFrameEditorPacket;
 import me.chrr.camerapture.net.clientbound.PictureErrorPacket;
 import me.chrr.camerapture.picture.PictureQuality;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -15,6 +18,20 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class PacketCodecTest {
+
+    @Test
+    public void testPictureFrameEditorRequestCarriesHitLocation() {
+        BlockPos anchor = new BlockPos(12, 64, -8);
+        Vec3 hit = new Vec3(10.25, 66.5, -7.9375);
+        RequestPictureFrameEditorPacket packet = new RequestPictureFrameEditorPacket(anchor, hit);
+        ByteBuf buf = Unpooled.buffer();
+
+        RequestPictureFrameEditorPacket.NET_CODEC.streamCodec().encode(buf, packet);
+        RequestPictureFrameEditorPacket decoded = RequestPictureFrameEditorPacket.NET_CODEC.streamCodec().decode(buf);
+
+        assertEquals(anchor, decoded.pos());
+        assertEquals(hit, decoded.hitLocation());
+    }
 
     @Test
     public void testUploadPartialPicturePacketSuccess() {

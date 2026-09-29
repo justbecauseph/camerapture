@@ -12,6 +12,7 @@ import me.chrr.camerapture.net.clientbound.PictureErrorPacket;
 import me.chrr.camerapture.net.clientbound.RequestUploadPacket;
 import me.chrr.camerapture.net.serverbound.NewPicturePacket;
 import me.chrr.camerapture.net.serverbound.RequestDownloadPacket;
+import me.chrr.camerapture.net.serverbound.RequestPictureFrameEditorPacket;
 import me.chrr.camerapture.net.serverbound.UploadPartialPicturePacket;
 import me.chrr.camerapture.block.PictureFrameBlock;
 import me.chrr.camerapture.block.PictureFrameBlockEntity;
@@ -38,6 +39,8 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.RecipeSerializer;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -130,6 +133,44 @@ public class Camerapture {
             .build();
 
     public static void registerPacketHandlers() {
+        // Capture the editor intent at click time. A delayed vanilla use packet can
+        // otherwise observe a released crouch key and rotate the frame instead.
+        NETWORK.onReceiveFromClient(RequestPictureFrameEditorPacket.class, (packet, player) -> {
+            var level = player.level();
+            Vec3 hit = packet.hitLocation();
+            if (!Double.isFinite(hit.x) || !Double.isFinite(hit.y) || !Double.isFinite(hit.z)) {
+                return;
+            }
+
+            // Reject remote packet targets before reading their chunks. The frame
+            // can extend 16 blocks from its anchor, unlike a vanilla one-block hit.
+            double reach = player.blockInteractionRange() + 1.0;
+            if (!player.isWithinBlockInteractionRange(packet.pos(), 17.0)
+                    || hit.distanceToSqr(player.getEyePosition()) >= reach * reach) {
+                return;
+            }
+
+            if (player.isSpectator() || !player.getMainHandItem().isEmpty() || !player.getOffhandItem().isEmpty()
+                    || !level.getWorldBorder().isWithinBounds(packet.pos())
+                    || !level.mayInteract(player, packet.pos())
+                    || player.server.isUnderSpawnProtection(level, packet.pos(), player)) {
+                return;
+            }
+
+            if (!level.getBlockState(packet.pos()).is(PICTURE_FRAME_BLOCK)
+                    || !(level.getBlockEntity(packet.pos()) instanceof PictureFrameBlockEntity frame)
+                    || !PictureFrameMenu.canInteractWithFrame(player, frame)) {
+                return;
+            }
+
+            // Vanilla checks that a use packet's hit is near its target block.
+            // A resized frame extends beyond its anchor, so use its actual shape.
+            AABB bounds = frame.getFrameShape().bounds().move(packet.pos());
+            if (player.containerMenu == player.inventoryMenu && bounds.inflate(1.0E-4).contains(hit)) {
+                player.openMenu(frame);
+            }
+        });
+
         // Client requests to take / upload a picture
         NETWORK.onReceiveFromClient(NewPicturePacket.class, (packet, player) -> {
             CameraItem.HeldCamera camera = CameraItem.find(player, false);
